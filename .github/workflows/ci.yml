@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: plataforma
+          POSTGRES_PASSWORD: plataforma
+          POSTGRES_DB: plataforma
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U plataforma"
+          --health-interval 5s --health-timeout 3s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgresql+psycopg2://plataforma:plataforma@localhost:5432/plataforma
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: pip install -e ".[dev]"
+      - name: Fronteras de arquitectura (import-linter)
+        run: lint-imports
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Tests
+        run: pytest

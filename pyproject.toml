@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plataforma-backend"
+version = "0.1.0"
+description = "Plataforma SaaS unificada (Scanner + SUNAT + SIRE) — monolito modular"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.138.1",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy==2.0.51",
+    "psycopg2-binary==2.9.12",
+    "alembic==1.18.5",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.2",
+    "redis>=5.0",
+    "python-dotenv==1.2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "httpx==0.28.1",
+    "import-linter>=2.0",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# E/F: errores y pyflakes; I: orden de imports. Determinista y sin ruido idiomático.
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+# ─── Fronteras de arquitectura (se verifican en CI con `lint-imports`) ───
+[tool.importlinter]
+root_package = "src"
+
+[[tool.importlinter.contracts]]
+name = "El núcleo (platform) no depende de los módulos"
+type = "forbidden"
+source_modules = ["src.platform"]
+forbidden_modules = ["src.modules"]
+
+# Fase 2: al existir los módulos, activar el contrato de independencia entre ellos:
+# [[tool.importlinter.contracts]]
+# name = "Los módulos de negocio no se importan entre sí"
+# type = "independence"
+# modules = ["src.modules.sire", "src.modules.sunat", "src.modules.scanner"]
