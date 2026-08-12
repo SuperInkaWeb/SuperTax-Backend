@@ -46,8 +46,9 @@ class Settings(BaseSettings):
     # DEV por defecto; en producción DEBE definirse por variable de entorno.
     ENCRYPTION_KEY: str = "v752OvalSjw6Lmo-cgJb12Kg7tGQ0qcIkdmnOMzcWj4="
 
-    # ─── Jobs ───
+    # ─── Jobs / SUNAT ───
     MAX_CONCURRENT_JOBS: int = 3
+    SUNAT_POLL_TIMEOUT_MINUTES: int = 90
 
     # ─── CORS (orígenes del frontend permitidos) ───
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

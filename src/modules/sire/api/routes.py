@@ -12,6 +12,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Response,
     UploadFile,
     status,
 )
@@ -95,6 +96,60 @@ def get_job(
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conciliación no encontrada")
     return JobResponse.model_validate(job)
+
+
+_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_CSV_COLUMNS = {
+    "a": "csv_a_storage_path",
+    "b": "csv_b_storage_path",
+    "c": "csv_c_storage_path",
+    "d": "csv_d_storage_path",
+}
+
+
+@router.get("/jobs/{job_id}/report")
+def download_report(
+    job_id: int,
+    ctx: ActiveContext = Depends(require_permission("sire.job.read")),
+    db: Session = Depends(get_db),
+    storage: FileStorage = Depends(get_storage),
+) -> Response:
+    report = SqlReconciliationRepository(db).get_report(job_id, ctx.company.id)
+    if report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Reporte no disponible")
+    content = storage.read(report.storage_path)
+    return Response(
+        content=content,
+        media_type=_XLSX_MEDIA,
+        headers={"Content-Disposition": f'attachment; filename="{report.filename}"'},
+    )
+
+
+@router.get("/jobs/{job_id}/report/csv/{escenario}")
+def download_csv(
+    job_id: int,
+    escenario: str,
+    ctx: ActiveContext = Depends(require_permission("sire.job.read")),
+    db: Session = Depends(get_db),
+    storage: FileStorage = Depends(get_storage),
+) -> Response:
+    columna = _CSV_COLUMNS.get(escenario.lower())
+    if columna is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escenario inválido (a, b, c o d)")
+    report = SqlReconciliationRepository(db).get_report(job_id, ctx.company.id)
+    storage_path = getattr(report, columna) if report else None
+    if storage_path is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"CSV del escenario {escenario.upper()} no disponible",
+        )
+    content = storage.read(storage_path)
+    filename = storage_path.split("/")[-1]
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ─────────────────────────── Credenciales SUNAT ───────────────────────────

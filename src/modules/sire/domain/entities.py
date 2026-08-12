@@ -36,3 +36,9 @@ class ReconciliationJob:
     # Resumen del resultado (presente solo cuando el job terminó).
     igv_diferencia_total: float | None = None
     tiene_alertas_rojas: bool | None = None
+    # Disponibilidad de archivos generados.
+    has_report: bool = False
+    has_csv_a: bool = False
+    has_csv_b: bool = False
+    has_csv_c: bool = False
+    has_csv_d: bool = False

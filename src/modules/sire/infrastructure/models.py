@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -52,8 +53,36 @@ class ReconciliationResultModel(Base):
     job_id: Mapped[int] = mapped_column(
         ForeignKey("sire.reconciliation_jobs.id", ondelete="CASCADE"), unique=True
     )
+    escenario_a_count: Mapped[int] = mapped_column(Integer, default=0)
+    escenario_b_count: Mapped[int] = mapped_column(Integer, default=0)
+    escenario_c_count: Mapped[int] = mapped_column(Integer, default=0)
+    escenario_d_count: Mapped[int] = mapped_column(Integer, default=0)
     igv_diferencia_total: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
     tiene_alertas_rojas: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ReportFileModel(Base):
+    """Archivos generados por la conciliación (Excel + CSV por escenario grande)."""
+
+    __tablename__ = "report_files"
+    __table_args__ = {"schema": "sire"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("sire.reconciliation_jobs.id", ondelete="CASCADE"), unique=True
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    storage_path: Mapped[str] = mapped_column(String(500))
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    csv_a_storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    csv_a_file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    csv_b_storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    csv_b_file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    csv_c_storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    csv_c_file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    csv_d_storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    csv_d_file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class SireCredentialsModel(Base):

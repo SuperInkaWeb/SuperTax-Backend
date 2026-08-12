@@ -149,3 +149,15 @@ def test_crear_job_sin_permiso_da_403(db_session, tmp_path):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 403
+
+
+def test_descargar_reporte_inexistente_da_404(db_session, tmp_path):
+    user, empresa = _escenario(db_session, role_key="operador")
+    _override(db_session, user, LocalStorage(str(tmp_path)))
+    try:
+        resp = TestClient(app).get(
+            "/api/sire/jobs/999/report", headers={"X-Company-Id": str(empresa.id)}
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 404

@@ -10,8 +10,10 @@ from src.modules.sire.domain.entities import (
 from src.modules.sire.infrastructure.models import (
     ReconciliationJobModel,
     ReconciliationResultModel,
+    ReportFileModel,
     SireCredentialsModel,
 )
+from src.platform.database.base import utcnow
 
 
 class SqlReconciliationRepository:
@@ -66,11 +68,71 @@ class SqlReconciliationRepository:
             row.empresa_file_path = storage_path
             self._db.commit()
 
+    def mark_error(self, job_id: int, message: str) -> None:
+        row = self._db.get(ReconciliationJobModel, job_id)
+        if row is not None:
+            row.status = JobStatus.error
+            row.error_message = message[:1000]
+            self._db.commit()
+
+    def save_success(self, job_id: int, result: dict) -> None:
+        """Persiste el resultado y el reporte, y marca el job como completado."""
+        self._db.add(
+            ReconciliationResultModel(
+                job_id=job_id,
+                escenario_a_count=result["escenario_a_count"],
+                escenario_b_count=result["escenario_b_count"],
+                escenario_c_count=result["escenario_c_count"],
+                escenario_d_count=result["escenario_d_count"],
+                igv_diferencia_total=result["igv_diferencia_total"],
+                tiene_alertas_rojas=result["tiene_alertas_rojas"],
+            )
+        )
+        self._db.add(
+            ReportFileModel(
+                job_id=job_id,
+                filename=result["filename_xlsx"],
+                storage_path=result["path_xlsx"],
+                file_size_bytes=result["excel_size"],
+                csv_a_storage_path=result["path_csv_a"],
+                csv_a_file_size_bytes=result["csv_a_size"],
+                csv_b_storage_path=result["path_csv"],
+                csv_b_file_size_bytes=result["csv_b_size"],
+                csv_c_storage_path=result["path_csv_c"],
+                csv_c_file_size_bytes=result["csv_c_size"],
+                csv_d_storage_path=result["path_csv_d"],
+                csv_d_file_size_bytes=result["csv_d_size"],
+            )
+        )
+        row = self._db.get(ReconciliationJobModel, job_id)
+        if row is not None:
+            row.status = JobStatus.completado
+            row.completed_at = utcnow()
+            row.empresa_file_path = None
+        self._db.commit()
+
+    def get_report(self, job_id: int, company_id: int) -> ReportFileModel | None:
+        """Devuelve el ReportFile del job, validando que sea de la empresa activa."""
+        return self._db.scalar(
+            select(ReportFileModel)
+            .join(
+                ReconciliationJobModel,
+                ReconciliationJobModel.id == ReportFileModel.job_id,
+            )
+            .where(
+                ReportFileModel.job_id == job_id,
+                ReconciliationJobModel.company_id == company_id,
+            )
+        )
+
     def _to_entity(self, row: ReconciliationJobModel) -> ReconciliationJob:
         result = self._db.scalar(
             select(ReconciliationResultModel).where(
                 ReconciliationResultModel.job_id == row.id
             )
+        )
+        report = self._db.scalar(
+            select(ReportFileModel).where(ReportFileModel.job_id == row.id)
         )
         return ReconciliationJob(
             id=row.id,
@@ -86,6 +148,11 @@ class SqlReconciliationRepository:
                 float(result.igv_diferencia_total) if result else None
             ),
             tiene_alertas_rojas=result.tiene_alertas_rojas if result else None,
+            has_report=report is not None,
+            has_csv_a=report is not None and report.csv_a_storage_path is not None,
+            has_csv_b=report is not None and report.csv_b_storage_path is not None,
+            has_csv_c=report is not None and report.csv_c_storage_path is not None,
+            has_csv_d=report is not None and report.csv_d_storage_path is not None,
         )
 
 

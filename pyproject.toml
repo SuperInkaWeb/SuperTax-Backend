@@ -20,6 +20,8 @@ dependencies = [
     "httpx==0.28.1",
     "python-jose[cryptography]==3.5.0",
     "python-multipart==0.0.32",
+    "pandas==3.0.3",
+    "openpyxl==3.1.5",
 ]
 
 [project.optional-dependencies]
@@ -35,8 +37,17 @@ include = ["src*"]
 
 [tool.ruff]
 line-length = 100
-# Las migraciones de Alembic son código autogenerado; no se lintan.
-extend-exclude = ["migrations"]
+# No se lintan: migraciones autogeneradas y el motor SIRE portado verbatim
+# desde sire-backend (se mantiene byte-idéntico a la fuente; ver código propio
+# —orchestrator, worker— que sí se lintea).
+extend-exclude = [
+    "migrations",
+    "src/modules/sire/infrastructure/parser",
+    "src/modules/sire/infrastructure/report",
+    "src/modules/sire/infrastructure/sunat",
+    "src/modules/sire/infrastructure/reconciliation/engine.py",
+    "src/modules/sire/infrastructure/reconciliation/worker.py",
+]
 
 [tool.ruff.lint]
 # E/F: errores y pyflakes; I: orden de imports. Determinista y sin ruido idiomático.
