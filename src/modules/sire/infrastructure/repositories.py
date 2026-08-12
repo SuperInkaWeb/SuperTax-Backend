@@ -8,6 +8,7 @@ from src.modules.sire.domain.entities import (
     TipoLibro,
 )
 from src.modules.sire.infrastructure.models import (
+    CompanyFileMappingModel,
     ReconciliationJobModel,
     ReconciliationResultModel,
     ReportFileModel,
@@ -48,6 +49,9 @@ class SqlReconciliationRepository:
         periodo: str,
         tipo_libro: TipoLibro,
         filename: str | None,
+        sin_sire: bool = False,
+        mapeo_config: dict | None = None,
+        cobertura_fechas: list | None = None,
     ) -> ReconciliationJob:
         row = ReconciliationJobModel(
             company_id=company_id,
@@ -56,6 +60,9 @@ class SqlReconciliationRepository:
             tipo_libro=tipo_libro,
             status=JobStatus.en_cola,
             empresa_filename=filename,
+            sin_sire=sin_sire,
+            mapeo_config=mapeo_config,
+            cobertura_fechas=cobertura_fechas,
         )
         self._db.add(row)
         self._db.commit()
@@ -67,6 +74,25 @@ class SqlReconciliationRepository:
         if row is not None:
             row.empresa_file_path = storage_path
             self._db.commit()
+
+    def requeue_failed(self, job_id: int, company_id: int) -> ReconciliationJob | None:
+        """Reencola un job en error para que el worker lo reprocese. None si no existe."""
+        row = self._db.scalar(
+            select(ReconciliationJobModel).where(
+                ReconciliationJobModel.id == job_id,
+                ReconciliationJobModel.company_id == company_id,
+            )
+        )
+        if row is None:
+            return None
+        if row.status != JobStatus.error:
+            raise ValueError("Solo se pueden reanudar conciliaciones en estado de error")
+        if not row.empresa_file_path:
+            raise ValueError("Este job no es reanudable (no se conservó el archivo)")
+        row.status = JobStatus.en_cola
+        row.error_message = None
+        self._db.commit()
+        return self._to_entity(row)
 
     def mark_error(self, job_id: int, message: str) -> None:
         row = self._db.get(ReconciliationJobModel, job_id)
@@ -186,3 +212,52 @@ class SqlCredentialsRepository:
         creds.client_secret_enc = client_secret_enc
         creds.updated_by_id = updated_by_id
         self._db.commit()
+
+
+class SqlFileMappingRepository:
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def get(self, company_id: int, tipo_libro: str) -> CompanyFileMappingModel | None:
+        return self._db.scalar(
+            select(CompanyFileMappingModel).where(
+                CompanyFileMappingModel.company_id == company_id,
+                CompanyFileMappingModel.tipo_libro == tipo_libro,
+            )
+        )
+
+    def save(self, company_id: int, tipo_libro: str, cfg: dict) -> CompanyFileMappingModel:
+        mapping = self.get(company_id, tipo_libro)
+        if mapping is None:
+            mapping = CompanyFileMappingModel(company_id=company_id, tipo_libro=tipo_libro)
+            self._db.add(mapping)
+        mapping.delimiter = cfg.get("delimiter", "|")
+        mapping.encoding = cfg.get("encoding", "latin-1")
+        mapping.has_header = bool(cfg.get("has_header", False))
+        mapping.skip_rows = int(cfg.get("skip_rows", 0))
+        mapping.columnas = cfg.get("columnas") or {}
+        mapping.serie_numero_combinado = bool(cfg.get("serie_numero_combinado", False))
+        mapping.confirmed_by_user = True
+        self._db.commit()
+        self._db.refresh(mapping)
+        return mapping
+
+    def delete(self, company_id: int, tipo_libro: str) -> None:
+        mapping = self.get(company_id, tipo_libro)
+        if mapping is not None:
+            self._db.delete(mapping)
+            self._db.commit()
+
+    def get_config(self, company_id: int, tipo_libro: str) -> dict | None:
+        """Formato guardado y confirmado como dict plano (para el parser), o None."""
+        m = self.get(company_id, tipo_libro)
+        if m and m.columnas and m.confirmed_by_user:
+            return {
+                "delimiter": m.delimiter,
+                "encoding": m.encoding,
+                "has_header": m.has_header,
+                "skip_rows": m.skip_rows,
+                "serie_numero_combinado": m.serie_numero_combinado,
+                "columnas": m.columnas,
+            }
+        return None

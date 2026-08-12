@@ -43,9 +43,9 @@ def db_session():
         text(
             "TRUNCATE core.role_permissions, core.memberships, core.company_modules, "
             "core.users, core.companies, core.roles, core.permissions, core.modules, "
-            "sire.company_credentials, sire.report_files, "
-            "sire.reconciliation_results, sire.reconciliation_jobs "
-            "RESTART IDENTITY CASCADE"
+            "sire.company_credentials, sire.company_file_mappings, "
+            "sire.report_files, sire.reconciliation_results, "
+            "sire.reconciliation_jobs RESTART IDENTITY CASCADE"
         )
     )
     # join_transaction_mode="create_savepoint": los commits de los repositorios

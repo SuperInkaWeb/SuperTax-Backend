@@ -43,16 +43,33 @@ def create_reconciliation_job(
     tipo_libro: TipoLibro,
     filename: str | None,
     content: bytes,
+    sin_sire: bool = False,
+    mapeo_config: dict | None = None,
+    cobertura_fechas: list | None = None,
 ) -> ReconciliationJob:
     """
     Valida el periodo, crea el job en estado 'en_cola' y guarda el archivo de la
-    empresa. El procesamiento asíncrono lo tomará el worker (sub-paso 2b-2).
+    empresa. El procesamiento asíncrono lo tomará el worker.
+
+    - sin_sire solo aplica a compras.
+    - mapeo_config: parseo manual de columnas para ESTE job (opcional).
+    - cobertura_fechas: solo ventas.
     """
     _validar_periodo(periodo)
     if not content:
         raise ValueError("El archivo está vacío")
 
-    job = repo.create(company_id, user_id, periodo, tipo_libro, filename)
+    sin_sire = bool(sin_sire) and tipo_libro == TipoLibro.compras
+    job = repo.create(
+        company_id,
+        user_id,
+        periodo,
+        tipo_libro,
+        filename,
+        sin_sire=sin_sire,
+        mapeo_config=mapeo_config,
+        cobertura_fechas=cobertura_fechas,
+    )
     storage_path = f"sire/uploads/{company_id}/{job.id}/{filename or 'empresa.csv'}"
     storage.save(storage_path, content)
     repo.set_file_path(job.id, storage_path)

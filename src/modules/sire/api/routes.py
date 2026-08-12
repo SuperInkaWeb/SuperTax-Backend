@@ -6,6 +6,8 @@ Doble puerta de seguridad:
 - `require_permission(...)` por endpoint: el rol debe poder.
 Todo se filtra por la empresa activa (`ctx.company.id`) → aislamiento multi-tenant.
 """
+import json
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -23,6 +25,7 @@ from src.modules.sire.api.schemas import (
     CredentialsStatusResponse,
     JobResponse,
 )
+from src.modules.sire.application import file_mapping
 from src.modules.sire.application.credentials import (
     get_credentials_status,
     set_credentials,
@@ -35,6 +38,7 @@ from src.modules.sire.application.use_cases import (
 from src.modules.sire.domain.entities import TipoLibro
 from src.modules.sire.infrastructure.repositories import (
     SqlCredentialsRepository,
+    SqlFileMappingRepository,
     SqlReconciliationRepository,
 )
 from src.platform.authorization.deps import require_module, require_permission
@@ -44,6 +48,20 @@ from src.platform.storage.base import FileStorage
 from src.platform.tenancy.current_tenant import ActiveContext
 
 router = APIRouter(tags=["sire"], dependencies=[Depends(require_module("sire"))])
+
+
+def _parse_json(raw: str, campo: str):
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=f"{campo} no es un JSON válido"
+        )
+
+
+def _validar_libro(tipo_libro: str) -> None:
+    if tipo_libro not in file_mapping.LIBROS_VALIDOS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="tipo_libro inválido")
 
 
 # ─────────────────────────── Conciliaciones ───────────────────────────
@@ -64,11 +82,28 @@ async def create_job(
     periodo: str = Form(..., description="Periodo AAAAMM, ej. 202601"),
     tipo_libro: TipoLibro = Form(...),
     archivo: UploadFile = File(..., description="Archivo TXT/CSV de la empresa"),
+    mapeo_columnas: str | None = Form(None, description="JSON del mapeo de columnas"),
+    guardar_formato: bool = Form(False, description="Guardar el mapeo como formato de la empresa"),
+    cobertura_fechas: str | None = Form(None, description="JSON de fechas (solo ventas)"),
+    sin_sire: bool = Form(False, description="Solo compras: empresa no afiliada al SIRE"),
     ctx: ActiveContext = Depends(require_permission("sire.job.create")),
     db: Session = Depends(get_db),
     storage: FileStorage = Depends(get_storage),
 ) -> JobResponse:
     content = await archivo.read()
+    mapeo_config = _parse_json(mapeo_columnas, "mapeo_columnas") if mapeo_columnas else None
+
+    cobertura: list | None = None
+    if cobertura_fechas is not None and tipo_libro == TipoLibro.ventas:
+        cobertura = _parse_json(cobertura_fechas, "cobertura_fechas")
+        if not isinstance(cobertura, list) or not all(
+            isinstance(f, str) and len(f) == 10 for f in cobertura
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="cobertura_fechas debe ser una lista de fechas AAAA-MM-DD",
+            )
+
     try:
         job = create_reconciliation_job(
             SqlReconciliationRepository(db),
@@ -79,9 +114,32 @@ async def create_job(
             tipo_libro=tipo_libro,
             filename=archivo.filename,
             content=content,
+            sin_sire=sin_sire,
+            mapeo_config=mapeo_config,
+            cobertura_fechas=cobertura,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    if guardar_formato and mapeo_config and mapeo_config.get("columnas"):
+        SqlFileMappingRepository(db).save(ctx.company.id, tipo_libro.value, mapeo_config)
+
+    return JobResponse.model_validate(job)
+
+
+@router.post("/jobs/{job_id}/resume", response_model=JobResponse)
+def resume_job(
+    job_id: int,
+    ctx: ActiveContext = Depends(require_permission("sire.job.create")),
+    db: Session = Depends(get_db),
+) -> JobResponse:
+    """Reencola una conciliación en error para que el worker la reprocese."""
+    try:
+        job = SqlReconciliationRepository(db).requeue_failed(job_id, ctx.company.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conciliación no encontrada")
     return JobResponse.model_validate(job)
 
 
@@ -181,3 +239,77 @@ def upsert_credentials(
     return CredentialsStatusResponse.model_validate(
         get_credentials_status(repo, ctx.company.id)
     )
+
+
+# ─────────────────────────── Formato de archivo (mapeo) ───────────────────────────
+@router.post("/file-mapping/analizar")
+async def analizar_formato(
+    tipo_libro: str = Form(...),
+    archivo: UploadFile = File(...),
+    ctx: ActiveContext = Depends(require_permission("sire.job.read")),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Analiza un archivo: columnas + mapeo propuesto + validación."""
+    _validar_libro(tipo_libro)
+    content = await archivo.read()
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío")
+    try:
+        return file_mapping.analizar(
+            SqlFileMappingRepository(db), ctx.company.id, tipo_libro, content
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/file-mapping/validar")
+async def validar_formato(
+    tipo_libro: str = Form(...),
+    config: str = Form(..., description="JSON del mapeo a validar"),
+    archivo: UploadFile = File(...),
+    ctx: ActiveContext = Depends(require_permission("sire.job.read")),
+) -> dict:
+    _validar_libro(tipo_libro)
+    cfg = _parse_json(config, "config")
+    content = await archivo.read()
+    return file_mapping.validar(content, cfg, tipo_libro)
+
+
+@router.post("/file-mapping/guardar")
+async def guardar_formato(
+    tipo_libro: str = Form(...),
+    config: str = Form(...),
+    archivo: UploadFile = File(...),
+    ctx: ActiveContext = Depends(require_permission("sire.mapping.manage")),
+    db: Session = Depends(get_db),
+) -> dict | None:
+    """Guarda deliberadamente el formato de la empresa (valida antes de persistir)."""
+    _validar_libro(tipo_libro)
+    cfg = _parse_json(config, "config")
+    content = await archivo.read()
+    try:
+        return file_mapping.guardar(
+            SqlFileMappingRepository(db), ctx.company.id, tipo_libro, cfg, content
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/file-mapping")
+def get_formato(
+    tipo_libro: str,
+    ctx: ActiveContext = Depends(require_permission("sire.job.read")),
+    db: Session = Depends(get_db),
+) -> dict | None:
+    _validar_libro(tipo_libro)
+    return file_mapping.get_saved(SqlFileMappingRepository(db), ctx.company.id, tipo_libro)
+
+
+@router.delete("/file-mapping", status_code=status.HTTP_204_NO_CONTENT)
+def delete_formato(
+    tipo_libro: str,
+    ctx: ActiveContext = Depends(require_permission("sire.mapping.manage")),
+    db: Session = Depends(get_db),
+) -> None:
+    _validar_libro(tipo_libro)
+    file_mapping.delete_saved(SqlFileMappingRepository(db), ctx.company.id, tipo_libro)
