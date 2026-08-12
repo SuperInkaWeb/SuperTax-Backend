@@ -37,17 +37,21 @@ def db_session():
     Base.metadata.create_all(engine, checkfirst=True)
 
     transaction = connection.begin()
-    session = sessionmaker(bind=connection)()
     # Cada test parte de tablas vacías (aislado del seed de desarrollo).
-    # El TRUNCATE es transaccional: el rollback final restaura el estado previo.
-    session.execute(
+    # El TRUNCATE va en la transacción externa; el rollback final lo revierte.
+    connection.execute(
         text(
             "TRUNCATE core.role_permissions, core.memberships, core.company_modules, "
             "core.users, core.companies, core.roles, core.permissions, core.modules, "
-            "sire.reconciliation_results, sire.reconciliation_jobs "
-            "RESTART IDENTITY CASCADE"
+            "sire.company_credentials, sire.reconciliation_results, "
+            "sire.reconciliation_jobs RESTART IDENTITY CASCADE"
         )
     )
+    # join_transaction_mode="create_savepoint": los commits de los repositorios
+    # ocurren sobre un savepoint, así el rollback externo los revierte igual.
+    session = sessionmaker(
+        bind=connection, join_transaction_mode="create_savepoint"
+    )()
     try:
         yield session
     finally:

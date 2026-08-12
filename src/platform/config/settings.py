@@ -33,11 +33,21 @@ class Settings(BaseSettings):
     AUTH0_DOMAIN: str = ""
     AUTH0_AUDIENCE: str = ""
 
-    # ─── Storage S3 / MinIO (fases posteriores) ───
+    # ─── Storage ───
+    # Backend local (dev) hasta migrar a S3/R2. Los adaptadores se eligen en
+    # platform/storage según estas variables.
+    STORAGE_LOCAL_PATH: str = "./storage"
     S3_ENDPOINT_URL: str = ""
     S3_BUCKET: str = "plataforma"
     S3_ACCESS_KEY: str = ""
     S3_SECRET_KEY: str = ""
+
+    # ─── Cifrado en reposo (Fernet) para datos sensibles (credenciales SUNAT) ───
+    # DEV por defecto; en producción DEBE definirse por variable de entorno.
+    ENCRYPTION_KEY: str = "v752OvalSjw6Lmo-cgJb12Kg7tGQ0qcIkdmnOMzcWj4="
+
+    # ─── Jobs ───
+    MAX_CONCURRENT_JOBS: int = 3
 
     # ─── CORS (orígenes del frontend permitidos) ───
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

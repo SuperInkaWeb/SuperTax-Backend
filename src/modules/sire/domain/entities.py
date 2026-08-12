@@ -30,6 +30,7 @@ class ReconciliationJob:
     tipo_libro: TipoLibro
     status: JobStatus
     created_at: datetime
+    empresa_filename: str | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
     # Resumen del resultado (presente solo cuando el job terminó).

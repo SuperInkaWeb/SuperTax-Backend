@@ -35,6 +35,8 @@ class ReconciliationJobModel(Base):
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="sire_job_status"), default=JobStatus.en_cola
     )
+    empresa_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    empresa_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(
@@ -52,3 +54,28 @@ class ReconciliationResultModel(Base):
     )
     igv_diferencia_total: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
     tiene_alertas_rojas: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SireCredentialsModel(Base):
+    """
+    Credenciales SUNAT-SIRE de la empresa. Los campos sensibles (clave SOL y
+    client_secret) se guardan cifrados con Fernet — nunca en texto plano.
+    """
+
+    __tablename__ = "company_credentials"
+    __table_args__ = {"schema": "sire"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("core.companies.id", ondelete="CASCADE"), unique=True
+    )
+    usuario_sol: Mapped[str] = mapped_column(String(50))
+    clave_sol_enc: Mapped[str] = mapped_column(Text)
+    client_id: Mapped[str] = mapped_column(String(100))
+    client_secret_enc: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    updated_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("core.users.id"), nullable=True
+    )

@@ -11,6 +11,7 @@ SIRE_PERMISSIONS = (
     "sire.job.read",
     "sire.job.create",
     "sire.job.approve",
+    "sire.credentials.manage",
 )
 
 descriptor = ModuleDescriptor(
