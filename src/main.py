@@ -15,6 +15,7 @@ from src.module_registry import MODULES
 from src.platform.config.settings import settings
 from src.platform.web.errors import register_error_handlers
 from src.platform.web.health import router as health_router
+from src.platform.web.me import router as me_router
 from src.platform.web.middleware import register_middleware
 
 
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
     register_middleware(app)
     register_error_handlers(app)
     app.include_router(health_router)
+    app.include_router(me_router)
 
     for module in MODULES:
         app.include_router(module.router, prefix=f"/api/{module.key}")

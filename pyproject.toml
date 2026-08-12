@@ -17,12 +17,13 @@ dependencies = [
     "pydantic-settings==2.14.2",
     "redis>=5.0",
     "python-dotenv==1.2.2",
+    "httpx==0.28.1",
+    "python-jose[cryptography]==3.5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
-    "httpx==0.28.1",
     "import-linter>=2.0",
     "ruff>=0.6",
 ]
@@ -33,6 +34,8 @@ include = ["src*"]
 
 [tool.ruff]
 line-length = 100
+# Las migraciones de Alembic son código autogenerado; no se lintan.
+extend-exclude = ["migrations"]
 
 [tool.ruff.lint]
 # E/F: errores y pyflakes; I: orden de imports. Determinista y sin ruido idiomático.

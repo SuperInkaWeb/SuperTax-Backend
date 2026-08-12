@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # ─── Base de datos (Postgres) ───
     DATABASE_URL: str = (
-        "postgresql+psycopg2://plataforma:plataforma@localhost:5432/plataforma"
+        "postgresql+psycopg2://plataforma:plataforma@localhost:5433/plataforma"
     )
 
     # ─── Redis (cola de jobs / cache) ───
