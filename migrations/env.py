@@ -10,6 +10,7 @@ from sqlalchemy import engine_from_config, pool
 
 # Modelos del núcleo Core — su import registra las tablas en Base.metadata
 # para que `--autogenerate` las detecte.
+from src.modules.sire.infrastructure import models as _sire_models  # noqa: E402, F401
 from src.platform.authorization import models as _authz_models  # noqa: E402, F401
 from src.platform.config.settings import settings
 from src.platform.database.base import Base
@@ -28,6 +29,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_schemas=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -40,7 +42,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_schemas=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
 
