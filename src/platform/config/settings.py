@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    DRIVE_REDIRECT_URI: str = "http://localhost:8000/api/sunat/drive/callback"
 
     # ─── CORS (orígenes del frontend permitidos) ───
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

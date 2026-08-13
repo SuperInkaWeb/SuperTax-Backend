@@ -18,7 +18,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,7 +28,7 @@ from src.modules.sunat.api.schemas import (
     DriveStatusResponse,
     JobResultResponse,
 )
-from src.modules.sunat.application import job_service
+from src.modules.sunat.application import drive_service, job_service
 from src.modules.sunat.application.credentials import (
     get_credentials_status,
     set_credentials,
@@ -104,6 +104,53 @@ def drive_status(
 ) -> DriveStatusResponse:
     token = SqlDriveTokenRepository(db).get(ctx.company.id)
     return DriveStatusResponse(connected=token is not None)
+
+
+@router.get("/drive/auth", dependencies=_MODULO)
+def drive_auth(
+    ctx: ActiveContext = Depends(require_permission("sunat.drive.manage")),
+) -> dict:
+    """Devuelve la URL de autorización de Google Drive para abrir en un popup."""
+    return {"url": drive_service.url_autorizacion(ctx.company.id, ctx.user.id)}
+
+
+def _html_popup(texto: str, code: int = 200, conectado: bool = False) -> HTMLResponse:
+    script = (
+        "<script>if(window.opener){window.opener.postMessage("
+        "{type:'DRIVE_CONNECTED'},'*');}setTimeout(function(){window.close();},1500);"
+        "</script>"
+        if conectado
+        else ""
+    )
+    return HTMLResponse(
+        f"<!doctype html><html><body>"
+        f"<p style='font-family:Arial;text-align:center;margin-top:40px'>{texto}</p>"
+        f"{script}</body></html>",
+        status_code=code,
+    )
+
+
+@router.get("/drive/callback")
+def drive_callback(
+    code: str, state: str = "", db: Session = Depends(get_db)
+) -> HTMLResponse:
+    """Callback de Google (popup): valida el state e intercambia el code por tokens."""
+    try:
+        drive_service.procesar_callback(db, code, state)
+    except drive_service.DriveError as exc:
+        return _html_popup(
+            f"{exc.message}. Cierra esta ventana e intenta de nuevo.", code=exc.status_code
+        )
+    return _html_popup("Conectado correctamente. Puedes cerrar esta ventana.", conectado=True)
+
+
+@router.post("/drive/desconectar", dependencies=_MODULO)
+def drive_desconectar(
+    ctx: ActiveContext = Depends(require_permission("sunat.drive.manage")),
+    db: Session = Depends(get_db),
+) -> dict:
+    drive_service.desconectar(db, ctx.company.id)
+    return {"message": "Drive desconectado"}
 
 
 # ─────────────────────── Ejecución de descargas ───────────────────────
