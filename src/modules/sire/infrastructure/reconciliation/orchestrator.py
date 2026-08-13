@@ -1,16 +1,17 @@
 """
 Orquestación del procesamiento de una conciliación.
 
-Flujo:
-  1. Ticket principal: si el job trae un `num_ticket` fresco (<24h) y vivo, lo
-     retoma (reanudar); si no, solicita uno nuevo a SUNAT.
-  2. Compras "sin SIRE": detecta los meses de emisión rezagados, resuelve una
-     propuesta por cada mes (retomando el ticket previo si sigue fresco, o
-     solicitándolo) y las descarga para reubicar los comprobantes.
-  3. Descarga la propuesta del periodo, corre el motor y guarda el resultado.
+Resolución del ticket de la propuesta SUNAT, en orden de preferencia:
+  1. Reanudar: si el propio job trae un `num_ticket` fresco (<24h) y vivo, lo retoma.
+  2. Reutilizar: si el usuario lo pidió, aprovecha una propuesta fresca y
+     "terminada" de OTRO job de la misma empresa/periodo/libro.
+  3. Solicitar: si no, pide una nueva a SUNAT.
 
-El camino vivo contra SUNAT (OAuth + descarga) requiere credenciales reales; la
-lógica de decisión (frescura, detección de meses) sí es verificable en tests.
+Compras "sin SIRE" repite esa resolución por cada mes rezagado. Luego descarga,
+corre el motor y guarda el resultado.
+
+El camino vivo contra SUNAT requiere credenciales reales; la lógica de decisión
+(frescura, reutilización, detección de meses) sí es verificable en tests.
 """
 import asyncio
 import logging
@@ -58,6 +59,41 @@ def _ticket_vivo(consulta: tuple[str, object] | None) -> bool:
     return consulta is not None and "error" not in consulta[0].lower()
 
 
+def _ticket_terminado(consulta: tuple[str, object] | None) -> bool:
+    """La propuesta está lista para descargarse (estado 'terminado')."""
+    return consulta is not None and "terminado" in consulta[0].lower()
+
+
+def _clientes(tipo_libro: TipoLibro):
+    """(solicitar, consultar, descargar) del módulo SUNAT según el libro."""
+    if tipo_libro == TipoLibro.compras:
+        return (
+            sunat_compras.solicitar_export_compras,
+            sunat_compras.consultar_ticket_compras,
+            sunat_compras.descargar_ticket_compras,
+        )
+    return (
+        sunat_ventas.solicitar_export_ventas,
+        sunat_ventas.consultar_ticket_ventas,
+        sunat_ventas.descargar_ticket_ventas,
+    )
+
+
+def _token_factory(company_id: int, creds: SireCredentialsModel, ruc: str):
+    """Closure que entrega (y cachea) el token OAuth de SUNAT para la empresa."""
+    snapshot = SimpleNamespace(
+        client_id=creds.client_id,
+        client_secret_enc=creds.client_secret_enc,
+        clave_sol_enc=creds.clave_sol_enc,
+        usuario_sol=creds.usuario_sol,
+    )
+
+    async def get_token(force_refresh: bool = False) -> str:
+        return await get_sunat_token(company_id, snapshot, ruc, force_refresh)
+
+    return get_token
+
+
 def _descripcion_cobertura(fechas: list[str] | None) -> str | None:
     """Texto legible de la cobertura declarada, para el Excel y trazabilidad."""
     if fechas is None:
@@ -85,6 +121,41 @@ def _descripcion_cobertura(fechas: list[str] | None) -> str | None:
     return f"{len(fs)} días entre el {fmt(fs[0])} y el {fmt(fs[-1])}"
 
 
+async def consultar_propuesta_disponible(
+    db: Session, company_id: int, periodo: str, tipo_libro: TipoLibro
+) -> dict:
+    """
+    Indica si existe una propuesta SUNAT fresca (<24h, 'terminada') de otro job
+    del mismo periodo/libro que podría reutilizarse en vez de solicitar una nueva.
+    """
+    no_disponible = {"disponible": False, "generado_a": None}
+    repo = SqlReconciliationRepository(db)
+    candidato = repo.buscar_ticket_fresco(company_id, periodo, tipo_libro)
+    if candidato is None:
+        return no_disponible
+
+    company = db.get(Company, company_id)
+    creds = db.scalar(
+        select(SireCredentialsModel).where(SireCredentialsModel.company_id == company_id)
+    )
+    if company is None or creds is None:
+        return no_disponible
+
+    get_token = _token_factory(company_id, creds, company.ruc)
+    _, consultar, _ = _clientes(tipo_libro)
+    try:
+        consulta = await consultar(get_token, candidato.num_ticket, periodo)
+    except Exception:  # una falla de red no debe romper la consulta de disponibilidad
+        return no_disponible
+
+    if not _ticket_terminado(consulta):
+        return no_disponible
+    return {
+        "disponible": True,
+        "generado_a": candidato.propuesta_origen_at or candidato.created_at,
+    }
+
+
 async def procesar_job(db: Session, job_id: int) -> None:
     repo = SqlReconciliationRepository(db)
     job = db.get(ReconciliationJobModel, job_id)
@@ -107,6 +178,7 @@ async def procesar_job(db: Session, job_id: int) -> None:
     tipo_libro = job.tipo_libro
     es_compras = tipo_libro == TipoLibro.compras
     sin_sire = bool(job.sin_sire) and es_compras
+    reutilizar = bool(job.reutilizar_propuesta)
 
     mapeo_config = job.mapeo_config
     saved_mapping = (
@@ -116,34 +188,31 @@ async def procesar_job(db: Session, job_id: int) -> None:
     )
     cobertura_fechas = job.cobertura_fechas
 
-    creds_snapshot = SimpleNamespace(
-        client_id=creds.client_id,
-        client_secret_enc=creds.client_secret_enc,
-        clave_sol_enc=creds.clave_sol_enc,
-        usuario_sol=creds.usuario_sol,
-    )
-
-    async def get_token(force_refresh: bool = False) -> str:
-        return await get_sunat_token(company_id, creds_snapshot, ruc, force_refresh)
-
-    if es_compras:
-        solicitar = sunat_compras.solicitar_export_compras
-        consultar = sunat_compras.consultar_ticket_compras
-        descargar = sunat_compras.descargar_ticket_compras
-    else:
-        solicitar = sunat_ventas.solicitar_export_ventas
-        consultar = sunat_ventas.consultar_ticket_ventas
-        descargar = sunat_ventas.descargar_ticket_ventas
+    get_token = _token_factory(company_id, creds, ruc)
+    solicitar, consultar, descargar = _clientes(tipo_libro)
 
     sunat_tmp_path: str | None = None
     sunat_extra_paths: dict[str, str] = {}
     meses_no_disponibles: list[str] = []
     try:
-        # 1. Ticket principal: retoma el guardado si sigue fresco y vivo (reanudar).
+        # 1. Ticket principal: reanudar (propio) → reutilizar (otro job) → solicitar.
         num_ticket: str | None = None
         if job.num_ticket and _es_fresco(job.propuesta_origen_at or job.created_at):
             if _ticket_vivo(await consultar(get_token, job.num_ticket, periodo)):
                 num_ticket = job.num_ticket
+        if num_ticket is None and reutilizar:
+            candidato = repo.buscar_ticket_fresco(
+                company_id, periodo, tipo_libro, exclude_job_id=job_id
+            )
+            if candidato is not None and _ticket_terminado(
+                await consultar(get_token, candidato.num_ticket, periodo)
+            ):
+                num_ticket = candidato.num_ticket
+                job.num_ticket = num_ticket
+                job.propuesta_origen_at = (
+                    candidato.propuesta_origen_at or candidato.created_at
+                )
+                db.commit()
         if num_ticket is None:
             num_ticket = await solicitar(get_token, periodo)
             job.num_ticket = num_ticket
@@ -166,14 +235,28 @@ async def procesar_job(db: Session, job_id: int) -> None:
             meses = await asyncio.to_thread(extraer_periodos_emision, sondeo)
             tickets_previos = dict(job.extra_tickets or {})
             job_fresco = _es_fresco(job.created_at)
+            candidatos_reuso: dict[str, str] = (
+                repo.buscar_tickets_frescos_multi(
+                    company_id, meses, tipo_libro, exclude_job_id=job_id
+                )
+                if reutilizar
+                else {}
+            )
             extra_tickets: dict[str, str] = {}
 
             for mes in meses:
                 num_mes: str | None = None
-                # Reanudar: reutiliza el ticket que este job ya generó para el mes.
+                # Reanudar: ticket que este job ya generó para el mes.
                 if job_fresco and mes in tickets_previos:
                     if _ticket_vivo(await consultar(get_token, tickets_previos[mes], mes)):
                         num_mes = tickets_previos[mes]
+                # Reutilizar: propuesta fresca de otro job para el mes.
+                if num_mes is None and mes in candidatos_reuso:
+                    if _ticket_terminado(
+                        await consultar(get_token, candidatos_reuso[mes], mes)
+                    ):
+                        num_mes = candidatos_reuso[mes]
+                # Solicitar una nueva.
                 if num_mes is None:
                     try:
                         num_mes = await solicitar(get_token, mes)

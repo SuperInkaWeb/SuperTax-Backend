@@ -139,6 +139,42 @@ def test_reanudar_retoma_ticket_fresco_sin_resolicitar(db_session, monkeypatch):
     assert job.num_ticket == "T-PREVIO"
 
 
+def test_reutilizar_propuesta_de_otro_job(db_session, monkeypatch):
+    empresa, user = _empresa_con_creds(db_session)
+    # Job A ya generó una propuesta fresca del mismo periodo/libro.
+    _job(db_session, empresa, user, status=JobStatus.completado, num_ticket="T-OTRO")
+    # Job B pide reutilizarla.
+    job_b = _job(db_session, empresa, user, reutilizar_propuesta=True)
+    contador = {"solicitar": 0, "consultar": 0}
+    _mock_sunat(monkeypatch, contador)
+
+    asyncio.run(orch.procesar_job(db_session, job_b.id))
+
+    db_session.refresh(job_b)
+    assert job_b.status == JobStatus.completado
+    assert job_b.num_ticket == "T-OTRO"  # reutilizó la propuesta del otro job
+    assert contador["solicitar"] == 0  # no pidió una nueva
+
+
+def test_propuesta_disponible(db_session, monkeypatch):
+    empresa, user = _empresa_con_creds(db_session)
+    contador = {"solicitar": 0, "consultar": 0}
+    _mock_sunat(monkeypatch, contador)
+
+    # Sin candidato → no disponible.
+    vacio = asyncio.run(
+        orch.consultar_propuesta_disponible(db_session, empresa.id, "202601", TipoLibro.compras)
+    )
+    assert vacio["disponible"] is False
+
+    # Con un job que tiene ticket fresco → disponible (consultar responde Terminado).
+    _job(db_session, empresa, user, status=JobStatus.completado, num_ticket="T-X")
+    resp = asyncio.run(
+        orch.consultar_propuesta_disponible(db_session, empresa.id, "202601", TipoLibro.compras)
+    )
+    assert resp["disponible"] is True
+
+
 def test_sin_sire_descarga_meses_extra_y_persiste_tickets(db_session, monkeypatch):
     empresa, user = _empresa_con_creds(db_session)
     job = _job(db_session, empresa, user, sin_sire=True)

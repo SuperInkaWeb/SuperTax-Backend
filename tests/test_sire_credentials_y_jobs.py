@@ -151,6 +151,27 @@ def test_crear_job_sin_permiso_da_403(db_session, tmp_path):
     assert resp.status_code == 403
 
 
+def test_rate_limit_conciliaciones(db_session, tmp_path):
+    user, empresa = _escenario(db_session, role_key="operador")
+    _override(db_session, user, LocalStorage(str(tmp_path)))
+    try:
+        client = TestClient(app)
+
+        def crear():
+            return client.post(
+                "/api/sire/jobs",
+                headers={"X-Company-Id": str(empresa.id)},
+                data={"periodo": "202601", "tipo_libro": "compras"},
+                files={"archivo": ("e.csv", b"x")},
+            )
+
+        codigos = [crear().status_code for _ in range(10)]
+        assert all(c == 201 for c in codigos)  # 10 permitidas
+        assert crear().status_code == 429  # la 11ª se bloquea
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_descargar_reporte_inexistente_da_404(db_session, tmp_path):
     user, empresa = _escenario(db_session, role_key="operador")
     _override(db_session, user, LocalStorage(str(tmp_path)))

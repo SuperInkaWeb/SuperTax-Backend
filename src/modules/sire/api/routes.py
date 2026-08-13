@@ -36,6 +36,9 @@ from src.modules.sire.application.use_cases import (
     list_reconciliation_jobs,
 )
 from src.modules.sire.domain.entities import TipoLibro
+from src.modules.sire.infrastructure.reconciliation.orchestrator import (
+    consultar_propuesta_disponible,
+)
 from src.modules.sire.infrastructure.repositories import (
     SqlCredentialsRepository,
     SqlFileMappingRepository,
@@ -46,8 +49,23 @@ from src.platform.database.session import get_db
 from src.platform.storage import get_storage
 from src.platform.storage.base import FileStorage
 from src.platform.tenancy.current_tenant import ActiveContext
+from src.platform.web.rate_limit import SlidingWindowLimiter
 
 router = APIRouter(tags=["sire"], dependencies=[Depends(require_module("sire"))])
+
+# Cada conciliación dispara descargas costosas a SUNAT: se limita la tasa por
+# usuario para evitar abuso de recursos (OWASP: Insecure Design).
+_limite_conciliacion = SlidingWindowLimiter(max_attempts=10, window_seconds=60)
+
+
+def _chequear_limite_conciliacion(user_id: int) -> None:
+    espera = _limite_conciliacion.blocked_for(f"user:{user_id}")
+    if espera:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiadas conciliaciones en poco tiempo. Espera {espera} segundo(s).",
+        )
+    _limite_conciliacion.register(f"user:{user_id}")
 
 
 def _parse_json(raw: str, campo: str):
@@ -86,10 +104,12 @@ async def create_job(
     guardar_formato: bool = Form(False, description="Guardar el mapeo como formato de la empresa"),
     cobertura_fechas: str | None = Form(None, description="JSON de fechas (solo ventas)"),
     sin_sire: bool = Form(False, description="Solo compras: empresa no afiliada al SIRE"),
+    reutilizar_propuesta: bool = Form(False, description="Reutilizar propuesta fresca si existe"),
     ctx: ActiveContext = Depends(require_permission("sire.job.create")),
     db: Session = Depends(get_db),
     storage: FileStorage = Depends(get_storage),
 ) -> JobResponse:
+    _chequear_limite_conciliacion(ctx.user.id)
     content = await archivo.read()
     mapeo_config = _parse_json(mapeo_columnas, "mapeo_columnas") if mapeo_columnas else None
 
@@ -117,6 +137,7 @@ async def create_job(
             sin_sire=sin_sire,
             mapeo_config=mapeo_config,
             cobertura_fechas=cobertura,
+            reutilizar_propuesta=reutilizar_propuesta,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -127,6 +148,17 @@ async def create_job(
     return JobResponse.model_validate(job)
 
 
+@router.get("/propuesta-disponible")
+async def propuesta_disponible(
+    periodo: str,
+    tipo_libro: TipoLibro,
+    ctx: ActiveContext = Depends(require_permission("sire.job.read")),
+    db: Session = Depends(get_db),
+) -> dict:
+    """¿Hay una propuesta fresca de otro job que se pueda reutilizar?"""
+    return await consultar_propuesta_disponible(db, ctx.company.id, periodo, tipo_libro)
+
+
 @router.post("/jobs/{job_id}/resume", response_model=JobResponse)
 def resume_job(
     job_id: int,
@@ -134,6 +166,7 @@ def resume_job(
     db: Session = Depends(get_db),
 ) -> JobResponse:
     """Reencola una conciliación en error para que el worker la reprocese."""
+    _chequear_limite_conciliacion(ctx.user.id)
     try:
         job = SqlReconciliationRepository(db).requeue_failed(job_id, ctx.company.id)
     except ValueError as exc:

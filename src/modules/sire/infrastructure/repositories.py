@@ -1,4 +1,6 @@
 """Repositorios SQLAlchemy del módulo SIRE (schema `sire`)."""
+from datetime import timedelta
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,6 +17,8 @@ from src.modules.sire.infrastructure.models import (
     SireCredentialsModel,
 )
 from src.platform.database.base import utcnow
+
+_TICKET_FRESCURA_HORAS = 24
 
 
 class SqlReconciliationRepository:
@@ -52,6 +56,7 @@ class SqlReconciliationRepository:
         sin_sire: bool = False,
         mapeo_config: dict | None = None,
         cobertura_fechas: list | None = None,
+        reutilizar_propuesta: bool = False,
     ) -> ReconciliationJob:
         row = ReconciliationJobModel(
             company_id=company_id,
@@ -63,11 +68,64 @@ class SqlReconciliationRepository:
             sin_sire=sin_sire,
             mapeo_config=mapeo_config,
             cobertura_fechas=cobertura_fechas,
+            reutilizar_propuesta=reutilizar_propuesta,
         )
         self._db.add(row)
         self._db.commit()
         self._db.refresh(row)
         return self._to_entity(row)
+
+    def buscar_ticket_fresco(
+        self,
+        company_id: int,
+        periodo: str,
+        tipo_libro: TipoLibro,
+        exclude_job_id: int | None = None,
+    ) -> ReconciliationJobModel | None:
+        """Último job de la empresa con ticket del mismo periodo/libro y < 24h."""
+        limite = utcnow() - timedelta(hours=_TICKET_FRESCURA_HORAS)
+        condiciones = [
+            ReconciliationJobModel.company_id == company_id,
+            ReconciliationJobModel.periodo == periodo,
+            ReconciliationJobModel.tipo_libro == tipo_libro,
+            ReconciliationJobModel.num_ticket.is_not(None),
+            ReconciliationJobModel.created_at > limite,
+        ]
+        if exclude_job_id is not None:
+            condiciones.append(ReconciliationJobModel.id != exclude_job_id)
+        return self._db.scalar(
+            select(ReconciliationJobModel)
+            .where(*condiciones)
+            .order_by(ReconciliationJobModel.id.desc())
+        )
+
+    def buscar_tickets_frescos_multi(
+        self,
+        company_id: int,
+        periodos: list[str],
+        tipo_libro: TipoLibro,
+        exclude_job_id: int | None = None,
+    ) -> dict[str, str]:
+        """Compras 'sin SIRE': {periodo: num_ticket} fresco (<24h) por cada periodo."""
+        if not periodos:
+            return {}
+        limite = utcnow() - timedelta(hours=_TICKET_FRESCURA_HORAS)
+        condiciones = [
+            ReconciliationJobModel.company_id == company_id,
+            ReconciliationJobModel.periodo.in_(periodos),
+            ReconciliationJobModel.tipo_libro == tipo_libro,
+            ReconciliationJobModel.num_ticket.is_not(None),
+            ReconciliationJobModel.created_at > limite,
+        ]
+        if exclude_job_id is not None:
+            condiciones.append(ReconciliationJobModel.id != exclude_job_id)
+        rows = self._db.scalars(
+            select(ReconciliationJobModel)
+            .where(*condiciones)
+            .order_by(ReconciliationJobModel.id.asc())
+        ).all()
+        # Ascendente: el más reciente (id mayor) sobrescribe → gana el último.
+        return {row.periodo: row.num_ticket for row in rows if row.num_ticket}
 
     def set_file_path(self, job_id: int, storage_path: str) -> None:
         row = self._db.get(ReconciliationJobModel, job_id)

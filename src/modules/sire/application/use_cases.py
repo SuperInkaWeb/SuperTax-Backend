@@ -46,6 +46,7 @@ def create_reconciliation_job(
     sin_sire: bool = False,
     mapeo_config: dict | None = None,
     cobertura_fechas: list | None = None,
+    reutilizar_propuesta: bool = False,
 ) -> ReconciliationJob:
     """
     Valida el periodo, crea el job en estado 'en_cola' y guarda el archivo de la
@@ -54,6 +55,7 @@ def create_reconciliation_job(
     - sin_sire solo aplica a compras.
     - mapeo_config: parseo manual de columnas para ESTE job (opcional).
     - cobertura_fechas: solo ventas.
+    - reutilizar_propuesta: aprovechar una propuesta fresca de otro job si existe.
     """
     _validar_periodo(periodo)
     if not content:
@@ -69,6 +71,7 @@ def create_reconciliation_job(
         sin_sire=sin_sire,
         mapeo_config=mapeo_config,
         cobertura_fechas=cobertura_fechas,
+        reutilizar_propuesta=reutilizar_propuesta,
     )
     storage_path = f"sire/uploads/{company_id}/{job.id}/{filename or 'empresa.csv'}"
     storage.save(storage_path, content)
