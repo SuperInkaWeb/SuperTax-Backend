@@ -33,7 +33,7 @@ def _rol_recibe(role_key: str, permission_key: str) -> bool:
     if role_key in ("admin_empresa", "supervisor"):
         return True
     if role_key == "operador":
-        return permission_key.endswith((".read", ".create"))
+        return permission_key.endswith((".read", ".create", ".update"))
     if role_key == "consulta":
         return permission_key.endswith(".read")
     return False

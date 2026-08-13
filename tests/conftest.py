@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from src.main import app
 
 # Registrar los modelos (Core + módulos) en Base.metadata
+from src.modules.scanner.infrastructure import models as _scanner  # noqa: F401
 from src.modules.sire.infrastructure import models as _sire  # noqa: F401
 from src.modules.sunat.infrastructure import models as _sunat  # noqa: F401
 from src.platform.authorization import models as _authz  # noqa: F401
@@ -58,8 +59,8 @@ def db_session():
             "sire.company_credentials, sire.company_file_mappings, "
             "sire.report_files, sire.reconciliation_results, "
             "sire.reconciliation_jobs, "
-            "sunat.sunat_credentials, sunat.drive_tokens, sunat.job_results "
-            "RESTART IDENTITY CASCADE"
+            "sunat.sunat_credentials, sunat.drive_tokens, sunat.job_results, "
+            "scanner.documentos RESTART IDENTITY CASCADE"
         )
     )
     # join_transaction_mode="create_savepoint": los commits de los repositorios

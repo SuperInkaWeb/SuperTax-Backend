@@ -10,6 +10,7 @@ from sqlalchemy import engine_from_config, pool
 
 # Modelos del núcleo Core — su import registra las tablas en Base.metadata
 # para que `--autogenerate` las detecte.
+from src.modules.scanner.infrastructure import models as _scanner_models  # noqa: E402, F401
 from src.modules.sire.infrastructure import models as _sire_models  # noqa: E402, F401
 from src.modules.sunat.infrastructure import models as _sunat_models  # noqa: E402, F401
 from src.platform.authorization import models as _authz_models  # noqa: E402, F401
