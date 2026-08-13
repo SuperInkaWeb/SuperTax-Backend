@@ -10,6 +10,7 @@ from src.modules.sire.infrastructure import models as _sire  # noqa: F401
 from src.platform.authorization import models as _authz  # noqa: F401
 from src.platform.config.settings import settings
 from src.platform.database.base import Base
+from src.platform.onboarding import models as _onboarding  # noqa: F401
 from src.platform.tenancy import models as _tenancy  # noqa: F401
 from src.platform.users import models as _users  # noqa: F401
 
@@ -51,7 +52,8 @@ def db_session():
     connection.execute(
         text(
             "TRUNCATE core.role_permissions, core.memberships, core.company_modules, "
-            "core.users, core.companies, core.roles, core.permissions, core.modules, "
+            "core.access_requests, core.users, core.companies, core.roles, "
+            "core.permissions, core.modules, "
             "sire.company_credentials, sire.company_file_mappings, "
             "sire.report_files, sire.reconciliation_results, "
             "sire.reconciliation_jobs RESTART IDENTITY CASCADE"

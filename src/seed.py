@@ -24,6 +24,9 @@ BASE_ROLES = {
     "consulta": "Consulta",
 }
 
+# Permisos de administración de la empresa (Core), solo para el Admin de empresa.
+CORE_COMPANY_PERMISSIONS = ("company.member.manage", "company.manage")
+
 
 def _rol_recibe(role_key: str, permission_key: str) -> bool:
     """Política por defecto de asignación permiso→rol."""
@@ -61,6 +64,14 @@ def _upsert_module(db: Session, key: str, nombre: str) -> None:
 
 def seed(db: Session) -> None:
     roles = {key: _upsert_role(db, key, nombre) for key, nombre in BASE_ROLES.items()}
+
+    # Permisos de administración de empresa → solo el Admin de la empresa.
+    admin_empresa = roles["admin_empresa"]
+    for permission_key in CORE_COMPANY_PERMISSIONS:
+        permission = _upsert_permission(db, permission_key)
+        if permission not in admin_empresa.permissions:
+            admin_empresa.permissions.append(permission)
+
     for descriptor in MODULES:
         _upsert_module(db, descriptor.key, descriptor.name)
         for permission_key in descriptor.permissions:

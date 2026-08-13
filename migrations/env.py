@@ -14,6 +14,7 @@ from src.modules.sire.infrastructure import models as _sire_models  # noqa: E402
 from src.platform.authorization import models as _authz_models  # noqa: E402, F401
 from src.platform.config.settings import settings
 from src.platform.database.base import Base
+from src.platform.onboarding import models as _onboarding_models  # noqa: E402, F401
 from src.platform.tenancy import models as _tenancy_models  # noqa: E402, F401
 from src.platform.users import models as _users_models  # noqa: E402, F401
 

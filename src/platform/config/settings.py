@@ -29,9 +29,15 @@ class Settings(BaseSettings):
     # ─── Redis (cola de jobs / cache) ───
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # ─── Auth0 (identidad única — se usa desde la Fase 1) ───
+    # ─── Auth0 (identidad única) ───
     AUTH0_DOMAIN: str = ""
     AUTH0_AUDIENCE: str = ""
+    # SPA (para el email de establecer contraseña) y Management API (crear/borrar
+    # usuarios desde el backend). Requeridos para el onboarding y la invitación.
+    AUTH0_SPA_CLIENT_ID: str = ""
+    AUTH0_MGMT_CLIENT_ID: str = ""
+    AUTH0_MGMT_CLIENT_SECRET: str = ""
+    AUTH0_DB_CONNECTION: str = "Username-Password-Authentication"
 
     # ─── Storage ───
     # Backend local (dev) hasta migrar a S3/R2. Los adaptadores se eligen en

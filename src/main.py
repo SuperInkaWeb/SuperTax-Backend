@@ -12,11 +12,24 @@ Cada módulo se monta bajo `/api/<key>` de forma automática.
 from fastapi import FastAPI
 
 from src.module_registry import MODULES
+from src.platform.authorization.roles_api import router as roles_router
 from src.platform.config.settings import settings
+from src.platform.onboarding.api import router as onboarding_router
+from src.platform.tenancy.companies_api import router as companies_router
+from src.platform.tenancy.members_api import router as members_router
 from src.platform.web.errors import register_error_handlers
 from src.platform.web.health import router as health_router
 from src.platform.web.me import router as me_router
 from src.platform.web.middleware import register_middleware
+
+# Routers del Core (administración de plataforma): identidad, tenencia, onboarding.
+_CORE_ROUTERS = (
+    me_router,
+    onboarding_router,
+    companies_router,
+    members_router,
+    roles_router,
+)
 
 
 def create_app() -> FastAPI:
@@ -25,7 +38,8 @@ def create_app() -> FastAPI:
     register_middleware(app)
     register_error_handlers(app)
     app.include_router(health_router)
-    app.include_router(me_router)
+    for router in _CORE_ROUTERS:
+        app.include_router(router)
 
     for module in MODULES:
         app.include_router(module.router, prefix=f"/api/{module.key}")
