@@ -25,5 +25,11 @@ class JobResultResponse(BaseModel):
     created_at: datetime
 
 
+class JobResultDetailResponse(BaseModel):
+    job_id: str
+    created_at: datetime
+    resultados: list
+
+
 class DriveStatusResponse(BaseModel):
     connected: bool

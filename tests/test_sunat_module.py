@@ -158,3 +158,30 @@ def test_logs_job_inexistente_da_404(db_session):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 404
+
+
+def test_detalle_job_devuelve_resultados(db_session):
+    import json
+
+    from src.modules.sunat.infrastructure.models import JobResultModel
+
+    user, empresa = _escenario(db_session, role_key="operador")
+    resultados = [{"id": "F001-1", "estado": "Parcial", "pdf": True, "xml": False}]
+    db_session.add(
+        JobResultModel(
+            job_id="job-xyz",
+            company_id=empresa.id,
+            created_by_id=user.id,
+            resultados=json.dumps(resultados),
+        )
+    )
+    db_session.flush()
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).get(
+            "/api/sunat/jobs/job-xyz", headers={"X-Company-Id": str(empresa.id)}
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert resp.json()["resultados"][0]["estado"] == "Parcial"

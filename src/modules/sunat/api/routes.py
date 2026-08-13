@@ -26,6 +26,7 @@ from src.modules.sunat.api.schemas import (
     CredentialsInput,
     CredentialsStatusResponse,
     DriveStatusResponse,
+    JobResultDetailResponse,
     JobResultResponse,
 )
 from src.modules.sunat.application import drive_service, job_service
@@ -66,6 +67,22 @@ def list_jobs(
     offset = max(0, offset)
     resultados = SqlJobResultRepository(db).list_by_company(ctx.company.id, limit, offset)
     return [JobResultResponse.model_validate(r) for r in resultados]
+
+
+@router.get("/jobs/{job_id}", response_model=JobResultDetailResponse, dependencies=_MODULO)
+def get_job(
+    job_id: str,
+    ctx: ActiveContext = Depends(require_permission("sunat.job.read")),
+    db: Session = Depends(get_db),
+) -> JobResultDetailResponse:
+    fila = SqlJobResultRepository(db).get_by_job_id(job_id, ctx.company.id)
+    if fila is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Resultado no encontrado")
+    return JobResultDetailResponse(
+        job_id=fila.job_id,
+        created_at=fila.created_at,
+        resultados=json.loads(fila.resultados),
+    )
 
 
 @router.get("/credentials", response_model=CredentialsStatusResponse, dependencies=_MODULO)

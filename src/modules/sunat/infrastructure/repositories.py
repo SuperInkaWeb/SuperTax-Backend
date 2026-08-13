@@ -59,6 +59,14 @@ class SqlJobResultRepository:
             for r in rows
         ]
 
+    def get_by_job_id(self, job_id: str, company_id: int) -> JobResultModel | None:
+        return self._db.scalar(
+            select(JobResultModel).where(
+                JobResultModel.job_id == job_id,
+                JobResultModel.company_id == company_id,
+            )
+        )
+
 
 class SqlDriveTokenRepository:
     def __init__(self, db: Session) -> None:
