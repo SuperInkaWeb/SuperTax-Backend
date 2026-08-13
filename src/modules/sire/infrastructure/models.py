@@ -44,6 +44,9 @@ class ReconciliationJobModel(Base):
     sin_sire: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Mapeo de columnas usado por ESTE job (para reanudar con el mismo parseo).
     mapeo_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Compras "sin SIRE": tickets SUNAT de propuestas de meses anteriores que
+    # este job generó ({ "AAAAMM": "numTicket" }), para reaprovechar al reanudar.
+    extra_tickets: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Ventas: fechas AAAA-MM-DD que el archivo declara cubrir ([] = mes completo).
     cobertura_fechas: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Ticket SUNAT de la propuesta (para reanudar/mostrar origen).

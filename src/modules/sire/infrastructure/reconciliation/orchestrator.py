@@ -1,14 +1,21 @@
 """
-Orquestación del procesamiento de una conciliación (camino principal):
-token SUNAT → solicitar propuesta → descargar → procesar (motor) → guardar.
+Orquestación del procesamiento de una conciliación.
 
-Las funciones avanzadas del sistema original (compras "sin SIRE" multi-mes,
-reanudar y reutilizar propuesta fresca) se incorporarán después; aquí está el
-flujo base que deja SIRE funcional de punta a punta.
+Flujo:
+  1. Ticket principal: si el job trae un `num_ticket` fresco (<24h) y vivo, lo
+     retoma (reanudar); si no, solicita uno nuevo a SUNAT.
+  2. Compras "sin SIRE": detecta los meses de emisión rezagados, resuelve una
+     propuesta por cada mes (retomando el ticket previo si sigue fresco, o
+     solicitándolo) y las descarga para reubicar los comprobantes.
+  3. Descarga la propuesta del periodo, corre el motor y guarda el resultado.
+
+El camino vivo contra SUNAT (OAuth + descarga) requiere credenciales reales; la
+lógica de decisión (frescura, detección de meses) sí es verificable en tests.
 """
 import asyncio
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from sqlalchemy import select
@@ -19,7 +26,10 @@ from src.modules.sire.infrastructure.models import (
     ReconciliationJobModel,
     SireCredentialsModel,
 )
-from src.modules.sire.infrastructure.reconciliation.worker import procesar_conciliacion
+from src.modules.sire.infrastructure.reconciliation.worker import (
+    extraer_periodos_emision,
+    procesar_conciliacion,
+)
 from src.modules.sire.infrastructure.repositories import (
     SqlFileMappingRepository,
     SqlReconciliationRepository,
@@ -31,6 +41,21 @@ from src.platform.database.base import utcnow
 from src.platform.tenancy.models import Company
 
 logger = logging.getLogger("sire.orchestrator")
+
+_TICKET_FRESCURA_HORAS = 24
+
+
+def _es_fresco(momento: datetime | None) -> bool:
+    """Un ticket/propuesta sigue vigente si se generó hace menos de 24h."""
+    if momento is None:
+        return False
+    con_tz = momento if momento.tzinfo else momento.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - con_tz < timedelta(hours=_TICKET_FRESCURA_HORAS)
+
+
+def _ticket_vivo(consulta: tuple[str, object] | None) -> bool:
+    """SUNAT sigue reconociendo el ticket si respondió y su estado no es error."""
+    return consulta is not None and "error" not in consulta[0].lower()
 
 
 def _descripcion_cobertura(fechas: list[str] | None) -> str | None:
@@ -80,6 +105,16 @@ async def procesar_job(db: Session, job_id: int) -> None:
     ruc = company.ruc
     periodo = job.periodo
     tipo_libro = job.tipo_libro
+    es_compras = tipo_libro == TipoLibro.compras
+    sin_sire = bool(job.sin_sire) and es_compras
+
+    mapeo_config = job.mapeo_config
+    saved_mapping = (
+        SqlFileMappingRepository(db).get_config(company_id, tipo_libro.value)
+        if mapeo_config is None
+        else None
+    )
+    cobertura_fechas = job.cobertura_fechas
 
     creds_snapshot = SimpleNamespace(
         client_id=creds.client_id,
@@ -91,31 +126,76 @@ async def procesar_job(db: Session, job_id: int) -> None:
     async def get_token(force_refresh: bool = False) -> str:
         return await get_sunat_token(company_id, creds_snapshot, ruc, force_refresh)
 
-    if tipo_libro == TipoLibro.compras:
+    if es_compras:
         solicitar = sunat_compras.solicitar_export_compras
+        consultar = sunat_compras.consultar_ticket_compras
         descargar = sunat_compras.descargar_ticket_compras
     else:
         solicitar = sunat_ventas.solicitar_export_ventas
+        consultar = sunat_ventas.consultar_ticket_ventas
         descargar = sunat_ventas.descargar_ticket_ventas
 
-    # Mapeo: el manual de ESTE job tiene prioridad; si no, el formato guardado.
-    mapeo_config = job.mapeo_config
-    saved_mapping = (
-        SqlFileMappingRepository(db).get_config(company_id, tipo_libro.value)
-        if mapeo_config is None
-        else None
-    )
-    cobertura_fechas = job.cobertura_fechas
-    sin_sire = bool(job.sin_sire) and tipo_libro == TipoLibro.compras
-
-    sunat_tmp_path = None
+    sunat_tmp_path: str | None = None
+    sunat_extra_paths: dict[str, str] = {}
+    meses_no_disponibles: list[str] = []
     try:
-        num_ticket = await solicitar(get_token, periodo)
-        job.num_ticket = num_ticket
-        job.propuesta_origen_at = utcnow()
-        db.commit()
+        # 1. Ticket principal: retoma el guardado si sigue fresco y vivo (reanudar).
+        num_ticket: str | None = None
+        if job.num_ticket and _es_fresco(job.propuesta_origen_at or job.created_at):
+            if _ticket_vivo(await consultar(get_token, job.num_ticket, periodo)):
+                num_ticket = job.num_ticket
+        if num_ticket is None:
+            num_ticket = await solicitar(get_token, periodo)
+            job.num_ticket = num_ticket
+            job.propuesta_origen_at = utcnow()
+            db.commit()
 
         sunat_tmp_path = await descargar(get_token, num_ticket, periodo)
+
+        # 2. Compras "sin SIRE": propuestas de meses anteriores para reubicar
+        #    los comprobantes rezagados en el Escenario A.
+        if sin_sire:
+            sondeo = {
+                "empresa_file_path": job.empresa_file_path,
+                "empresa_filename": job.empresa_filename or "",
+                "tipo_libro": tipo_libro.value,
+                "mapeo_config": mapeo_config,
+                "saved_mapping": saved_mapping,
+                "periodo": periodo,
+            }
+            meses = await asyncio.to_thread(extraer_periodos_emision, sondeo)
+            tickets_previos = dict(job.extra_tickets or {})
+            job_fresco = _es_fresco(job.created_at)
+            extra_tickets: dict[str, str] = {}
+
+            for mes in meses:
+                num_mes: str | None = None
+                # Reanudar: reutiliza el ticket que este job ya generó para el mes.
+                if job_fresco and mes in tickets_previos:
+                    if _ticket_vivo(await consultar(get_token, tickets_previos[mes], mes)):
+                        num_mes = tickets_previos[mes]
+                if num_mes is None:
+                    try:
+                        num_mes = await solicitar(get_token, mes)
+                    except Exception as exc:  # una propuesta que falla no aborta el job
+                        logger.warning(
+                            "Job #%s sin_sire: no se pudo solicitar la propuesta de %s (%s)",
+                            job_id, mes, exc,
+                        )
+                        continue
+                extra_tickets[mes] = num_mes
+                try:
+                    sunat_extra_paths[mes] = await descargar(get_token, num_mes, mes)
+                except Exception as exc:
+                    logger.warning(
+                        "Job #%s sin_sire: no se pudo descargar la propuesta de %s (%s)",
+                        job_id, mes, exc,
+                    )
+
+            meses_no_disponibles = [m for m in meses if m not in sunat_extra_paths]
+            if extra_tickets:
+                job.extra_tickets = extra_tickets
+                db.commit()
 
         payload = {
             "empresa_file_path": job.empresa_file_path,
@@ -127,8 +207,8 @@ async def procesar_job(db: Session, job_id: int) -> None:
             "cobertura_fechas": cobertura_fechas,
             "cobertura_desc": _descripcion_cobertura(cobertura_fechas),
             "sin_sire": sin_sire,
-            "sunat_extra_paths": {},
-            "sunat_extra_fallidos": [],
+            "sunat_extra_paths": sunat_extra_paths,
+            "sunat_extra_fallidos": meses_no_disponibles,
             "ruc": ruc,
             "empresa_nombre": company.razon_social,
             "periodo": periodo,
@@ -136,7 +216,7 @@ async def procesar_job(db: Session, job_id: int) -> None:
             "company_id": company_id,
             "job_id": job_id,
         }
-        # El motor (pandas/openpyxl) es CPU-bound; se corre en un hilo aparte
+        # El motor (pandas/openpyxl) es CPU-bound: se corre en un hilo aparte
         # para no bloquear el loop asíncrono del worker.
         result = await asyncio.to_thread(procesar_conciliacion, payload)
         repo.save_success(job_id, result)
@@ -149,8 +229,9 @@ async def procesar_job(db: Session, job_id: int) -> None:
         )
         repo.mark_error(job_id, mensaje)
     finally:
-        if sunat_tmp_path:
-            try:
-                os.remove(sunat_tmp_path)
-            except OSError:
-                pass
+        for ruta in (sunat_tmp_path, *sunat_extra_paths.values()):
+            if ruta:
+                try:
+                    os.remove(ruta)
+                except OSError:
+                    pass
