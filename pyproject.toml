@@ -23,6 +23,9 @@ dependencies = [
     "pandas==3.0.3",
     "openpyxl==3.1.5",
     "email-validator==2.3.0",
+    "playwright==1.60.0",
+    "google-auth>=2.30",
+    "google-api-python-client>=2.130",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +51,7 @@ extend-exclude = [
     "src/modules/sire/infrastructure/sunat",
     "src/modules/sire/infrastructure/reconciliation/engine.py",
     "src/modules/sire/infrastructure/reconciliation/worker.py",
+    "src/modules/sunat/infrastructure/automation",
 ]
 
 [tool.ruff.lint]

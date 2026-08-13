@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # ─── Jobs / SUNAT ───
     MAX_CONCURRENT_JOBS: int = 3
     SUNAT_POLL_TIMEOUT_MINUTES: int = 90
+    # Descarga automatizada (módulo SUNAT / Playwright).
+    DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
 
     # ─── CORS (orígenes del frontend permitidos) ───
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

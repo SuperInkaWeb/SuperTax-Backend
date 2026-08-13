@@ -1,11 +1,25 @@
 """
 Endpoints del módulo SUNAT (montados bajo /api/sunat).
 
-Doble puerta: `require_module("sunat")` + `require_permission(...)`, todo filtrado
-por la empresa activa. La ejecución de descargas (Playwright + SSE) llega en 3b;
-aquí están credenciales, historial y estado de Google Drive.
+Los endpoints normales pasan por `require_module("sunat")` + `require_permission`
+y se filtran por empresa activa. El streaming de logs (`/logs`) es SSE: el
+navegador (EventSource) no puede enviar cabeceras, así que valida el token Auth0
+por query param y comprueba la propiedad del job manualmente.
 """
-from fastapi import APIRouter, Depends
+import json
+import queue
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.modules.sunat.api.schemas import (
@@ -14,10 +28,12 @@ from src.modules.sunat.api.schemas import (
     DriveStatusResponse,
     JobResultResponse,
 )
+from src.modules.sunat.application import job_service
 from src.modules.sunat.application.credentials import (
     get_credentials_status,
     set_credentials,
 )
+from src.modules.sunat.infrastructure import jobs as runner
 from src.modules.sunat.infrastructure.repositories import (
     SqlDriveTokenRepository,
     SqlJobResultRepository,
@@ -25,12 +41,21 @@ from src.modules.sunat.infrastructure.repositories import (
 )
 from src.platform.authorization.deps import require_module, require_permission
 from src.platform.database.session import get_db
+from src.platform.identity.auth0 import Auth0Error, validar_token
 from src.platform.tenancy.current_tenant import ActiveContext
+from src.platform.users.models import User
 
-router = APIRouter(tags=["sunat"], dependencies=[Depends(require_module("sunat"))])
+router = APIRouter(tags=["sunat"])
+
+_MODULO = [Depends(require_module("sunat"))]
 
 
-@router.get("/jobs", response_model=list[JobResultResponse])
+def _b(valor: str) -> bool:
+    return valor.lower() == "true"
+
+
+# ─────────────────────── Consulta / configuración ───────────────────────
+@router.get("/jobs", response_model=list[JobResultResponse], dependencies=_MODULO)
 def list_jobs(
     limit: int = 100,
     offset: int = 0,
@@ -43,7 +68,7 @@ def list_jobs(
     return [JobResultResponse.model_validate(r) for r in resultados]
 
 
-@router.get("/credentials", response_model=CredentialsStatusResponse)
+@router.get("/credentials", response_model=CredentialsStatusResponse, dependencies=_MODULO)
 def credentials_status(
     ctx: ActiveContext = Depends(require_permission("sunat.credentials.manage")),
     db: Session = Depends(get_db),
@@ -52,7 +77,7 @@ def credentials_status(
     return CredentialsStatusResponse.model_validate(estado)
 
 
-@router.put("/credentials", response_model=CredentialsStatusResponse)
+@router.put("/credentials", response_model=CredentialsStatusResponse, dependencies=_MODULO)
 def upsert_credentials(
     payload: CredentialsInput,
     ctx: ActiveContext = Depends(require_permission("sunat.credentials.manage")),
@@ -72,10 +97,172 @@ def upsert_credentials(
     )
 
 
-@router.get("/drive", response_model=DriveStatusResponse)
+@router.get("/drive", response_model=DriveStatusResponse, dependencies=_MODULO)
 def drive_status(
     ctx: ActiveContext = Depends(require_permission("sunat.drive.manage")),
     db: Session = Depends(get_db),
 ) -> DriveStatusResponse:
     token = SqlDriveTokenRepository(db).get(ctx.company.id)
     return DriveStatusResponse(connected=token is not None)
+
+
+# ─────────────────────── Ejecución de descargas ───────────────────────
+@router.post("/preview-excel", dependencies=_MODULO)
+async def preview_excel(
+    excel_link: str = Form(""),
+    excel: UploadFile | None = File(None),
+    ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        return await job_service.previsualizar(
+            db, ctx.company.id, excel=excel, excel_link=excel_link
+        )
+    except job_service.SunatJobError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post("/iniciar", dependencies=_MODULO)
+async def iniciar(
+    ruc: str = Form(...),
+    usuario: str = Form(...),
+    clave: str = Form(...),
+    usar_correo: str = Form("false"),
+    gmail_user: str = Form(""),
+    gmail_pass: str = Form(""),
+    destino: str = Form(""),
+    modo_correo: str = Form("individual"),
+    usar_drive: str = Form("false"),
+    drive_folder: str = Form(""),
+    excel_link: str = Form(""),
+    descargar_pdf: str = Form("true"),
+    descargar_xml: str = Form("true"),
+    comprobantes_ids: str = Form(""),
+    preview_id: str = Form(""),
+    excel: UploadFile | None = File(None),
+    ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        job_id = await job_service.iniciar(
+            db,
+            ctx.company.id,
+            ctx.user.id,
+            ruc=ruc,
+            usuario=usuario,
+            clave=clave,
+            usar_correo=_b(usar_correo),
+            gmail_user=gmail_user,
+            gmail_pass=gmail_pass,
+            destino=destino,
+            modo_correo=modo_correo,
+            usar_drive=_b(usar_drive),
+            drive_folder=drive_folder,
+            excel_link=excel_link,
+            descargar_pdf=_b(descargar_pdf),
+            descargar_xml=_b(descargar_xml),
+            comprobantes_seleccionados=(
+                json.loads(comprobantes_ids) if comprobantes_ids.strip() else []
+            ),
+            preview_id=preview_id,
+            excel=excel,
+        )
+    except job_service.SunatJobError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"job_id": job_id}
+
+
+@router.post("/forzar-faltantes", dependencies=_MODULO)
+async def forzar_faltantes(
+    ruc: str = Form(...),
+    usuario: str = Form(...),
+    clave: str = Form(...),
+    usar_correo: str = Form("false"),
+    gmail_user: str = Form(""),
+    gmail_pass: str = Form(""),
+    destino: str = Form(""),
+    modo_correo: str = Form("individual"),
+    usar_drive: str = Form("false"),
+    drive_folder: str = Form(""),
+    excel_link: str = Form(""),
+    resultados_previos: str = Form(...),
+    excel: UploadFile | None = File(None),
+    ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        job_id = await job_service.forzar_faltantes(
+            db,
+            ctx.company.id,
+            ctx.user.id,
+            ruc=ruc,
+            usuario=usuario,
+            clave=clave,
+            usar_correo=_b(usar_correo),
+            gmail_user=gmail_user,
+            gmail_pass=gmail_pass,
+            destino=destino,
+            modo_correo=modo_correo,
+            usar_drive=_b(usar_drive),
+            drive_folder=drive_folder,
+            excel_link=excel_link,
+            resultados_previos=resultados_previos,
+            excel=excel,
+        )
+    except job_service.SunatJobError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"job_id": job_id}
+
+
+@router.post("/cancelar/{job_id}", dependencies=_MODULO)
+def cancelar(
+    job_id: str,
+    ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
+) -> dict:
+    job = runner.jobs.get(job_id)
+    if job and job.get("user_id") == ctx.user.id:
+        job["cancelar"].set()
+    return {"message": "Cancelación solicitada"}
+
+
+@router.get("/logs/{job_id}")
+async def logs(job_id: str, token: str = "", db: Session = Depends(get_db)):
+    """
+    Stream SSE de logs/progreso. Auth manual: EventSource no envía cabeceras, así
+    que el token Auth0 llega por query param y se valida la propiedad del job.
+    """
+    job = runner.jobs.get(job_id)
+    if not job:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
+    try:
+        claims = validar_token(token)
+    except Auth0Error:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
+    user = db.scalar(select(User).where(User.auth0_sub == claims.get("sub")))
+    if user is None or job.get("user_id") != user.id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
+
+    def stream():
+        log_buf = job.setdefault("log_buf", [])
+        for i in range(len(log_buf)):
+            yield f"id: {i}\ndata: {log_buf[i]}\n\n"
+        idx = len(log_buf)
+        while True:
+            try:
+                msg = job["log_q"].get(timeout=1)
+                job["log_buf"].append(msg)
+                yield f"id: {idx}\ndata: {msg}\n\n"
+                idx += 1
+            except queue.Empty:
+                if job["status"] == "done" and job["log_q"].empty():
+                    yield "data: __FIN__\n\n"
+                    runner.jobs.pop(job_id, None)
+                    break
+                yield ": heartbeat\n\n"
+            try:
+                prog = job["prog_q"].get_nowait()
+                yield f"event: progress\ndata: {prog}\n\n"
+            except queue.Empty:
+                pass
+
+    return StreamingResponse(stream(), media_type="text/event-stream")

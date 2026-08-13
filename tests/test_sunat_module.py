@@ -120,3 +120,41 @@ def test_drive_no_conectado(db_session):
         app.dependency_overrides.clear()
     assert resp.status_code == 200
     assert resp.json() == {"connected": False}
+
+
+# ─────────────────────── Jobs (3b) ───────────────────────
+def test_email_valido():
+    from src.modules.sunat.application.job_service import _es_email_valido
+
+    assert _es_email_valido("a@b.pe") is True
+    assert _es_email_valido("no-es-email") is False
+    assert _es_email_valido("") is False
+
+
+def test_iniciar_con_correo_invalido_da_400(db_session):
+    user, empresa = _escenario(db_session, role_key="operador")
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/sunat/iniciar",
+            headers={"X-Company-Id": str(empresa.id)},
+            data={
+                "ruc": "20700000001",
+                "usuario": "U",
+                "clave": "C",
+                "usar_correo": "true",
+                "destino": "no-es-email",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 400
+
+
+def test_logs_job_inexistente_da_404(db_session):
+    app.dependency_overrides[get_db] = lambda: db_session
+    try:
+        resp = TestClient(app).get("/api/sunat/logs/inexistente?token=x")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 404
