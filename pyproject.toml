@@ -68,8 +68,7 @@ type = "forbidden"
 source_modules = ["src.platform"]
 forbidden_modules = ["src.modules"]
 
-# Fase 2: al existir los módulos, activar el contrato de independencia entre ellos:
-# [[tool.importlinter.contracts]]
-# name = "Los módulos de negocio no se importan entre sí"
-# type = "independence"
-# modules = ["src.modules.sire", "src.modules.sunat", "src.modules.scanner"]
+[[tool.importlinter.contracts]]
+name = "Los módulos de negocio no se importan entre sí"
+type = "independence"
+modules = ["src.modules.sire", "src.modules.sunat"]

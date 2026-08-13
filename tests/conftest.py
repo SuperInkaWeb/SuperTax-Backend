@@ -7,6 +7,7 @@ from src.main import app
 
 # Registrar los modelos (Core + módulos) en Base.metadata
 from src.modules.sire.infrastructure import models as _sire  # noqa: F401
+from src.modules.sunat.infrastructure import models as _sunat  # noqa: F401
 from src.platform.authorization import models as _authz  # noqa: F401
 from src.platform.config.settings import settings
 from src.platform.database.base import Base
@@ -56,7 +57,9 @@ def db_session():
             "core.permissions, core.modules, "
             "sire.company_credentials, sire.company_file_mappings, "
             "sire.report_files, sire.reconciliation_results, "
-            "sire.reconciliation_jobs RESTART IDENTITY CASCADE"
+            "sire.reconciliation_jobs, "
+            "sunat.sunat_credentials, sunat.drive_tokens, sunat.job_results "
+            "RESTART IDENTITY CASCADE"
         )
     )
     # join_transaction_mode="create_savepoint": los commits de los repositorios
