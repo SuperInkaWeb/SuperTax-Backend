@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     DRIVE_REDIRECT_URI: str = "http://localhost:8000/api/sunat/drive/callback"
+    # Ejecutable de Tesseract OCR (módulo Scanner). En PATH por defecto.
+    SCANNER_TESSERACT_CMD: str = "tesseract"
 
     # ─── CORS (orígenes del frontend permitidos) ───
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

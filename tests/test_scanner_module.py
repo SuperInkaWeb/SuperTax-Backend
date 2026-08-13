@@ -122,6 +122,21 @@ def test_actualizar_documento_de_otra_empresa_da_404(db_session):
     assert resp.status_code == 404
 
 
+def test_tipos_documento(db_session):
+    user, empresa = _escenario(db_session, role_key="consulta")  # solo read
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).get(
+            "/api/scanner/tipos-documento", headers={"X-Company-Id": str(empresa.id)}
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "factura_electronica" in body
+    assert "etiqueta" in body["factura_electronica"]
+
+
 def test_actualizar_sin_permiso_da_403(db_session):
     # 'consulta' tiene scanner.doc.read pero NO scanner.doc.update.
     user, empresa = _escenario(db_session, role_key="consulta")

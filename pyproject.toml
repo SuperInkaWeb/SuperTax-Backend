@@ -26,6 +26,11 @@ dependencies = [
     "playwright==1.60.0",
     "google-auth>=2.30",
     "google-api-python-client>=2.130",
+    "pytesseract==0.3.13",
+    "opencv-python-headless==4.13.0.92",
+    "pymupdf>=1.24",
+    "pdfplumber>=0.11",
+    "pillow>=11",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +57,8 @@ extend-exclude = [
     "src/modules/sire/infrastructure/reconciliation/engine.py",
     "src/modules/sire/infrastructure/reconciliation/worker.py",
     "src/modules/sunat/infrastructure/automation",
+    "src/modules/scanner/infrastructure/utils",
+    "src/modules/scanner/infrastructure/extractor",
 ]
 
 [tool.ruff.lint]
