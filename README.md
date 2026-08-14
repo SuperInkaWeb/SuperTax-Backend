@@ -41,6 +41,7 @@ uvicorn src.main:app --reload
 # 5. Workers (cada uno en OTRA terminal, con el venv activo)
 python -m workers.sire_worker       # conciliaciones SIRE
 python -m workers.scanner_worker    # extracción OCR de documentos
+python -m workers.sunat_worker      # descargas SUNAT (Playwright)
 ```
 
 > ⚠️ **Los workers son obligatorios.** SIRE (conciliaciones) y Scanner (OCR)
@@ -71,6 +72,7 @@ Se despliega con el [`Dockerfile`](./Dockerfile) (una sola imagen) corrida como
 | **web** (comando por defecto de la imagen) | `uvicorn src.main:app --host 0.0.0.0 --port $PORT` | API HTTP |
 | **sire-worker** (sobreescribe el comando) | `python -m workers.sire_worker` | Procesa conciliaciones SIRE |
 | **scanner-worker** (sobreescribe el comando) | `python -m workers.scanner_worker` | Procesa OCR de documentos |
+| **sunat-worker** (sobreescribe el comando) | `python -m workers.sunat_worker` | Procesa descargas SUNAT (Playwright) |
 
 En Railway/Render se crean estos servicios apuntando al mismo repo: **web** usa
 el comando por defecto del `Dockerfile`; cada **worker** sobreescribe el *start

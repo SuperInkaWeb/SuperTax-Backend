@@ -7,7 +7,80 @@ from src.modules.sunat.infrastructure.models import (
     DriveTokenModel,
     JobResultModel,
     SunatCredentialsModel,
+    SunatJobLogModel,
+    SunatJobModel,
+    SunatJobStatus,
 )
+from src.platform.database.base import utcnow
+
+_ESTADOS_TERMINALES = (
+    SunatJobStatus.completado,
+    SunatJobStatus.error,
+    SunatJobStatus.cancelado,
+)
+
+
+class SqlSunatJobRepository:
+    """Cola de descargas SUNAT + logs (canal SSE sobre Postgres)."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def create(
+        self, company_id: int, user_id: int, job_id: str, config_enc: str, excel_path: str
+    ) -> SunatJobModel:
+        job = SunatJobModel(
+            job_id=job_id,
+            company_id=company_id,
+            created_by_id=user_id,
+            config_enc=config_enc,
+            excel_path=excel_path,
+        )
+        self._db.add(job)
+        self._db.commit()
+        return job
+
+    def get(self, job_id: str) -> SunatJobModel | None:
+        """Sin filtro de empresa: uso interno del worker."""
+        return self._db.scalar(
+            select(SunatJobModel).where(SunatJobModel.job_id == job_id)
+        )
+
+    def get_scoped(self, job_id: str, company_id: int) -> SunatJobModel | None:
+        return self._db.scalar(
+            select(SunatJobModel).where(
+                SunatJobModel.job_id == job_id,
+                SunatJobModel.company_id == company_id,
+            )
+        )
+
+    def set_status(self, job_id: str, status: SunatJobStatus) -> None:
+        job = self.get(job_id)
+        if job is not None:
+            job.status = status
+            if status in _ESTADOS_TERMINALES:
+                job.completed_at = utcnow()
+            self._db.commit()
+
+    def request_cancel(self, job_id: str, company_id: int) -> bool:
+        job = self.get_scoped(job_id, company_id)
+        if job is None:
+            return False
+        job.cancel_requested = True
+        self._db.commit()
+        return True
+
+    def logs_after(self, job_id: str, after_id: int) -> list[SunatJobLogModel]:
+        return list(
+            self._db.scalars(
+                select(SunatJobLogModel)
+                .where(
+                    SunatJobLogModel.job_id == job_id,
+                    SunatJobLogModel.id > after_id,
+                )
+                .order_by(SunatJobLogModel.id)
+            ).all()
+        )
 
 
 class SqlSunatCredentialsRepository:

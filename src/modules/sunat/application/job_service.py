@@ -10,9 +10,11 @@ import re
 
 from sqlalchemy.orm import Session
 
+from src.modules.sunat.infrastructure import job_queue
 from src.modules.sunat.infrastructure import jobs as runner
 from src.modules.sunat.infrastructure.repositories import SqlDriveTokenRepository
 from src.platform.security import decrypt_field
+from src.platform.storage.base import FileStorage
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -46,6 +48,7 @@ async def _resolver_excel(preview_id, excel, excel_link, drive_access, drive_ref
 
 async def iniciar(
     db: Session,
+    storage: FileStorage,
     company_id: int,
     user_id: int,
     *,
@@ -77,11 +80,12 @@ async def iniciar(
         "descargar_xml": descargar_xml,
         "comprobantes_seleccionados": comprobantes_seleccionados,
     }
-    return runner.crear_job(company_id, user_id, config, excel_path)
+    return job_queue.encolar_job(db, storage, company_id, user_id, config, excel_path)
 
 
 async def forzar_faltantes(
     db: Session,
+    storage: FileStorage,
     company_id: int,
     user_id: int,
     *,
@@ -128,7 +132,7 @@ async def forzar_faltantes(
         "drive_refresh_token": drive_refresh,
         "solo_faltantes": solo_faltantes,
     }
-    return runner.crear_job(company_id, user_id, config, excel_path)
+    return job_queue.encolar_job(db, storage, company_id, user_id, config, excel_path)
 
 
 async def previsualizar(db: Session, company_id: int, *, excel, excel_link) -> dict:

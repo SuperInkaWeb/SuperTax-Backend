@@ -185,3 +185,53 @@ def test_detalle_job_devuelve_resultados(db_session):
         app.dependency_overrides.clear()
     assert resp.status_code == 200
     assert resp.json()["resultados"][0]["estado"] == "Parcial"
+
+
+def test_iniciar_encola_job_cifrando_config(db_session):
+    from src.modules.sunat.infrastructure.models import SunatJobModel, SunatJobStatus
+
+    user, empresa = _escenario(db_session, role_key="operador")
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/sunat/iniciar",
+            headers={"X-Company-Id": str(empresa.id)},
+            data={"ruc": "20700000001", "usuario": "U", "clave": "claveSOL"},
+            files={"excel": ("libro.xlsx", b"PK-fake-xlsx", "application/octet-stream")},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert "job_id" in resp.json()
+
+    job = db_session.scalar(
+        select(SunatJobModel).where(SunatJobModel.company_id == empresa.id)
+    )
+    assert job is not None
+    assert job.status == SunatJobStatus.en_cola
+    assert "claveSOL" not in job.config_enc  # la config va cifrada
+
+
+def test_cancelar_marca_cancel_requested(db_session):
+    from src.modules.sunat.infrastructure.models import SunatJobModel
+
+    user, empresa = _escenario(db_session, role_key="operador")
+    job = SunatJobModel(
+        job_id="job-cancel",
+        company_id=empresa.id,
+        created_by_id=user.id,
+        config_enc="x",
+        excel_path="sunat/uploads/x.xlsx",
+    )
+    db_session.add(job)
+    db_session.flush()
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/sunat/cancelar/job-cancel", headers={"X-Company-Id": str(empresa.id)}
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    db_session.refresh(job)
+    assert job.cancel_requested is True

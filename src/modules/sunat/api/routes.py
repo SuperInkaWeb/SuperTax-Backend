@@ -7,7 +7,7 @@ navegador (EventSource) no puede enviar cabeceras, así que valida el token Auth
 por query param y comprueba la propiedad del job manualmente.
 """
 import json
-import queue
+import time
 
 from fastapi import (
     APIRouter,
@@ -34,15 +34,18 @@ from src.modules.sunat.application.credentials import (
     get_credentials_status,
     set_credentials,
 )
-from src.modules.sunat.infrastructure import jobs as runner
+from src.modules.sunat.infrastructure.models import SunatJobStatus
 from src.modules.sunat.infrastructure.repositories import (
     SqlDriveTokenRepository,
     SqlJobResultRepository,
     SqlSunatCredentialsRepository,
+    SqlSunatJobRepository,
 )
 from src.platform.authorization.deps import require_module, require_permission
-from src.platform.database.session import get_db
+from src.platform.database.session import SessionLocal, get_db
 from src.platform.identity.auth0 import Auth0Error, validar_token
+from src.platform.storage import get_storage
+from src.platform.storage.base import FileStorage
 from src.platform.tenancy.current_tenant import ActiveContext
 from src.platform.users.models import User
 
@@ -206,10 +209,12 @@ async def iniciar(
     excel: UploadFile | None = File(None),
     ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
     db: Session = Depends(get_db),
+    storage: FileStorage = Depends(get_storage),
 ) -> dict:
     try:
         job_id = await job_service.iniciar(
             db,
+            storage,
             ctx.company.id,
             ctx.user.id,
             ruc=ruc,
@@ -253,10 +258,12 @@ async def forzar_faltantes(
     excel: UploadFile | None = File(None),
     ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
     db: Session = Depends(get_db),
+    storage: FileStorage = Depends(get_storage),
 ) -> dict:
     try:
         job_id = await job_service.forzar_faltantes(
             db,
+            storage,
             ctx.company.id,
             ctx.user.id,
             ruc=ruc,
@@ -282,51 +289,63 @@ async def forzar_faltantes(
 def cancelar(
     job_id: str,
     ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
+    db: Session = Depends(get_db),
 ) -> dict:
-    job = runner.jobs.get(job_id)
-    if job and job.get("user_id") == ctx.user.id:
-        job["cancelar"].set()
+    SqlSunatJobRepository(db).request_cancel(job_id, ctx.company.id)
     return {"message": "Cancelación solicitada"}
 
 
+_ESTADOS_FINALES = (
+    SunatJobStatus.completado,
+    SunatJobStatus.error,
+    SunatJobStatus.cancelado,
+)
+
+
 @router.get("/logs/{job_id}")
-async def logs(job_id: str, token: str = "", db: Session = Depends(get_db)):
+def logs(job_id: str, token: str = "", db: Session = Depends(get_db)):
     """
-    Stream SSE de logs/progreso. Auth manual: EventSource no envía cabeceras, así
-    que el token Auth0 llega por query param y se valida la propiedad del job.
+    Stream SSE de logs/progreso leídos de Postgres (el worker los escribe ahí).
+    Auth manual: EventSource no envía cabeceras, el token Auth0 llega por query
+    param y se valida la propiedad del job (su creador). El chequeo usa la sesión
+    del request; el streaming abre sesiones cortas propias.
     """
-    job = runner.jobs.get(job_id)
-    if not job:
+    job = SqlSunatJobRepository(db).get(job_id)
+    if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
     try:
         claims = validar_token(token)
     except Auth0Error:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
     user = db.scalar(select(User).where(User.auth0_sub == claims.get("sub")))
-    if user is None or job.get("user_id") != user.id:
+    if user is None or job.created_by_id != user.id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
+    # Libera la transacción del request: el streaming (abajo) usa sesiones cortas
+    # propias y no debe retener esta conexión en transacción durante minutos.
+    db.rollback()
 
     def stream():
-        log_buf = job.setdefault("log_buf", [])
-        for i in range(len(log_buf)):
-            yield f"id: {i}\ndata: {log_buf[i]}\n\n"
-        idx = len(log_buf)
+        ultimo_id = 0
         while True:
+            db = SessionLocal()
             try:
-                msg = job["log_q"].get(timeout=1)
-                job["log_buf"].append(msg)
-                yield f"id: {idx}\ndata: {msg}\n\n"
-                idx += 1
-            except queue.Empty:
-                if job["status"] == "done" and job["log_q"].empty():
+                repo = SqlSunatJobRepository(db)
+                filas = repo.logs_after(job_id, ultimo_id)
+                fila_job = repo.get(job_id)
+                estado = fila_job.status if fila_job else None
+            finally:
+                db.close()
+            for fila in filas:
+                ultimo_id = fila.id
+                if fila.kind == "progress":
+                    yield f"event: progress\ndata: {fila.message}\n\n"
+                else:
+                    yield f"id: {fila.id}\ndata: {fila.message}\n\n"
+            if not filas:
+                if estado in _ESTADOS_FINALES:
                     yield "data: __FIN__\n\n"
-                    runner.jobs.pop(job_id, None)
                     break
                 yield ": heartbeat\n\n"
-            try:
-                prog = job["prog_q"].get_nowait()
-                yield f"event: progress\ndata: {prog}\n\n"
-            except queue.Empty:
-                pass
+                time.sleep(1)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
