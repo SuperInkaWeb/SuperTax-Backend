@@ -1,13 +1,25 @@
 """
 Abstracción de almacenamiento de archivos (puerto + selección de adaptador).
 
-Hoy usa disco local; al migrar a S3/R2 solo se cambia el adaptador aquí, sin
-tocar a los módulos que dependen de la interfaz `FileStorage`.
+El adaptador se elige por `STORAGE_BACKEND`: "local" (disco, dev) o "s3"
+(AWS S3 / Cloudflare R2 / MinIO). Los módulos dependen solo de la interfaz
+`FileStorage`, así cambiar de backend no los toca.
 """
+from src.platform.config.settings import settings
 from src.platform.storage.base import FileStorage
 from src.platform.storage.local import LocalStorage
 
-storage: FileStorage = LocalStorage()
+
+def _crear_storage() -> FileStorage:
+    if settings.STORAGE_BACKEND == "s3":
+        # Import perezoso: boto3 solo se carga si realmente se usa S3.
+        from src.platform.storage.s3 import S3Storage
+
+        return S3Storage()
+    return LocalStorage()
+
+
+storage: FileStorage = _crear_storage()
 
 
 def get_storage() -> FileStorage:

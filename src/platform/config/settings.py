@@ -40,10 +40,13 @@ class Settings(BaseSettings):
     AUTH0_DB_CONNECTION: str = "Username-Password-Authentication"
 
     # ─── Storage ───
-    # Backend local (dev) hasta migrar a S3/R2. Los adaptadores se eligen en
-    # platform/storage según estas variables.
+    # STORAGE_BACKEND elige el adaptador explícitamente: "local" (disco, dev) o
+    # "s3" (AWS S3 / Cloudflare R2 / MinIO). Explícito para no activar S3 por
+    # error solo porque existan las variables S3_*.
+    STORAGE_BACKEND: str = "local"
     STORAGE_LOCAL_PATH: str = "./storage"
-    S3_ENDPOINT_URL: str = ""
+    S3_ENDPOINT_URL: str = ""  # vacío = AWS; setear para R2/MinIO
+    S3_REGION: str = "us-east-1"  # R2 usa "auto"
     S3_BUCKET: str = "plataforma"
     S3_ACCESS_KEY: str = ""
     S3_SECRET_KEY: str = ""
