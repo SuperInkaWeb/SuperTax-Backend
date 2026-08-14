@@ -8,7 +8,12 @@ aunque su uso real empiece en fases posteriores.
 """
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Llave Fernet de desarrollo. Cómoda en local, pero está en el repo: en
+# producción DEBE reemplazarse por una propia (ver el validador más abajo).
+_DEFAULT_DEV_ENCRYPTION_KEY = "v752OvalSjw6Lmo-cgJb12Kg7tGQ0qcIkdmnOMzcWj4="
 
 
 class Settings(BaseSettings):
@@ -53,10 +58,11 @@ class Settings(BaseSettings):
 
     # ─── Cifrado en reposo (Fernet) para datos sensibles (credenciales SUNAT) ───
     # DEV por defecto; en producción DEBE definirse por variable de entorno.
-    ENCRYPTION_KEY: str = "v752OvalSjw6Lmo-cgJb12Kg7tGQ0qcIkdmnOMzcWj4="
+    ENCRYPTION_KEY: str = _DEFAULT_DEV_ENCRYPTION_KEY
 
     # ─── Jobs / SUNAT ───
-    MAX_CONCURRENT_JOBS: int = 3
+    # La concurrencia la determina cuántos procesos worker se corren (cola con
+    # FOR UPDATE SKIP LOCKED), no un número aquí.
     SUNAT_POLL_TIMEOUT_MINUTES: int = 90
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
@@ -68,6 +74,19 @@ class Settings(BaseSettings):
 
     # ─── CORS (orígenes del frontend permitidos) ───
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+
+    @model_validator(mode="after")
+    def _exigir_encryption_key_en_produccion(self) -> "Settings":
+        """En producción no se permite arrancar con la llave de cifrado de dev."""
+        if self.ENV == "production" and self.ENCRYPTION_KEY in (
+            "",
+            _DEFAULT_DEV_ENCRYPTION_KEY,
+        ):
+            raise ValueError(
+                "ENCRYPTION_KEY debe definirse por variable de entorno en producción "
+                "(no uses el valor por defecto de desarrollo)."
+            )
+        return self
 
 
 @lru_cache
