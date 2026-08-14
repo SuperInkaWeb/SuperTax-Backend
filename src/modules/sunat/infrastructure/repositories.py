@@ -54,6 +54,19 @@ class SqlSunatJobRepository:
             )
         )
 
+    def list_by_company(
+        self, company_id: int, limit: int, offset: int
+    ) -> list[SunatJobModel]:
+        return list(
+            self._db.scalars(
+                select(SunatJobModel)
+                .where(SunatJobModel.company_id == company_id)
+                .order_by(SunatJobModel.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            ).all()
+        )
+
     def set_status(self, job_id: str, status: SunatJobStatus) -> None:
         job = self.get(job_id)
         if job is not None:
@@ -139,6 +152,15 @@ class SqlJobResultRepository:
                 JobResultModel.company_id == company_id,
             )
         )
+
+    def job_ids_con_resultado(self, job_ids: list[str]) -> set[str]:
+        """Subconjunto de job_ids que ya tienen resultados guardados."""
+        if not job_ids:
+            return set()
+        rows = self._db.scalars(
+            select(JobResultModel.job_id).where(JobResultModel.job_id.in_(job_ids))
+        ).all()
+        return set(rows)
 
 
 class SqlDriveTokenRepository:

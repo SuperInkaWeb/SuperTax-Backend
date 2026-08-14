@@ -10,9 +10,13 @@ import re
 
 from sqlalchemy.orm import Session
 
+from src.modules.sunat.application import credentials as sunat_creds
 from src.modules.sunat.infrastructure import job_queue
 from src.modules.sunat.infrastructure import jobs as runner
-from src.modules.sunat.infrastructure.repositories import SqlDriveTokenRepository
+from src.modules.sunat.infrastructure.repositories import (
+    SqlDriveTokenRepository,
+    SqlSunatCredentialsRepository,
+)
 from src.platform.security import decrypt_field
 from src.platform.storage.base import FileStorage
 
@@ -25,6 +29,18 @@ class SunatJobError(Exception):
 
 def _es_email_valido(email: str) -> bool:
     return bool(_EMAIL_RE.match(email or ""))
+
+
+def _resolver_login(
+    db: Session, company_id: int, ruc: str, usuario: str, clave: str
+) -> tuple[str, str, str]:
+    """Si el form no trae clave, usa las credenciales SOL guardadas de la empresa."""
+    if clave:
+        return ruc, usuario, clave
+    saved = sunat_creds.get_saved_login(SqlSunatCredentialsRepository(db), company_id)
+    if saved is None:
+        raise SunatJobError("Ingresa la clave SOL o guárdala en la pestaña Credenciales")
+    return saved
 
 
 def _drive_tokens(db: Session, company_id: int) -> tuple[str, str]:
@@ -59,6 +75,7 @@ async def iniciar(
     if usar_correo and not _es_email_valido(destino):
         raise SunatJobError("El correo de destino no tiene un formato válido")
 
+    ruc, usuario, clave = _resolver_login(db, company_id, ruc, usuario, clave)
     drive_access, drive_refresh = _drive_tokens(db, company_id)
     excel_path = await _resolver_excel(
         preview_id, excel, excel_link, drive_access, drive_refresh
@@ -94,6 +111,7 @@ async def forzar_faltantes(
 ) -> str:
     if usar_correo and not _es_email_valido(destino):
         raise SunatJobError("El correo de destino no tiene un formato válido")
+    ruc, usuario, clave = _resolver_login(db, company_id, ruc, usuario, clave)
     try:
         previos = json.loads(resultados_previos)
     except (ValueError, TypeError):

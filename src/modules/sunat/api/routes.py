@@ -27,7 +27,7 @@ from src.modules.sunat.api.schemas import (
     CredentialsStatusResponse,
     DriveStatusResponse,
     JobResultDetailResponse,
-    JobResultResponse,
+    SunatJobListItem,
 )
 from src.modules.sunat.application import drive_service, job_service
 from src.modules.sunat.application.credentials import (
@@ -59,17 +59,27 @@ def _b(valor: str) -> bool:
 
 
 # ─────────────────────── Consulta / configuración ───────────────────────
-@router.get("/jobs", response_model=list[JobResultResponse], dependencies=_MODULO)
+@router.get("/jobs", response_model=list[SunatJobListItem], dependencies=_MODULO)
 def list_jobs(
     limit: int = 100,
     offset: int = 0,
     ctx: ActiveContext = Depends(require_permission("sunat.job.read")),
     db: Session = Depends(get_db),
-) -> list[JobResultResponse]:
+) -> list[SunatJobListItem]:
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    resultados = SqlJobResultRepository(db).list_by_company(ctx.company.id, limit, offset)
-    return [JobResultResponse.model_validate(r) for r in resultados]
+    jobs = SqlSunatJobRepository(db).list_by_company(ctx.company.id, limit, offset)
+    con_resultado = SqlJobResultRepository(db).job_ids_con_resultado([j.job_id for j in jobs])
+    return [
+        SunatJobListItem(
+            job_id=j.job_id,
+            status=j.status,
+            created_at=j.created_at,
+            completed_at=j.completed_at,
+            has_result=j.job_id in con_resultado,
+        )
+        for j in jobs
+    ]
 
 
 @router.get("/jobs/{job_id}", response_model=JobResultDetailResponse, dependencies=_MODULO)
@@ -104,14 +114,17 @@ def upsert_credentials(
     db: Session = Depends(get_db),
 ) -> CredentialsStatusResponse:
     repo = SqlSunatCredentialsRepository(db)
-    set_credentials(
-        repo,
-        company_id=ctx.company.id,
-        user_id=ctx.user.id,
-        ruc=payload.ruc,
-        usuario=payload.usuario,
-        clave=payload.clave,
-    )
+    try:
+        set_credentials(
+            repo,
+            company_id=ctx.company.id,
+            user_id=ctx.user.id,
+            ruc=payload.ruc,
+            usuario=payload.usuario,
+            clave=payload.clave,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return CredentialsStatusResponse.model_validate(
         get_credentials_status(repo, ctx.company.id)
     )

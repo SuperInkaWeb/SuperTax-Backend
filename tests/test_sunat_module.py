@@ -61,7 +61,9 @@ def test_credenciales_sunat_se_cifran(db_session):
     assert resp.status_code == 200
     body = resp.json()
     assert body["configured"] is True and body["ruc"] == "20700000001"
-    assert "clave" not in body and "usuario" not in body  # secretos nunca
+    # El usuario SOL se expone (para prellenar el form); la clave NUNCA.
+    assert "clave" not in body
+    assert body["usuario"] == "USUARIO1"
 
     creds = db_session.scalar(
         select(SunatCredentialsModel).where(SunatCredentialsModel.company_id == empresa.id)
