@@ -1,7 +1,7 @@
 """Endpoints de onboarding (solicitudes de acceso)."""
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -10,8 +10,25 @@ from src.platform.database.session import get_db
 from src.platform.onboarding import service
 from src.platform.onboarding.models import AccessRequestStatus
 from src.platform.users.models import User
+from src.platform.web.rate_limit import SlidingWindowLimiter
 
 router = APIRouter(prefix="/api/access-requests", tags=["onboarding"])
+
+# El alta de solicitudes es pública (sin sesión): se limita por IP para evitar
+# spam de registros (OWASP: Insecure Design). En memoria del proceso; para un
+# límite global tras varias réplicas habría que respaldarlo en Redis.
+_limite_solicitudes = SlidingWindowLimiter(max_attempts=5, window_seconds=3600)
+
+
+def _chequear_limite_solicitud(request: Request) -> None:
+    ip = request.client.host if request.client else "desconocida"
+    espera = _limite_solicitudes.blocked_for(f"ip:{ip}")
+    if espera:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiadas solicitudes en poco tiempo. Intenta en {espera} segundo(s).",
+        )
+    _limite_solicitudes.register(f"ip:{ip}")
 
 
 class AccessRequestInput(BaseModel):
@@ -44,9 +61,10 @@ class AccessRequestResponse(BaseModel):
 
 @router.post("", response_model=AccessRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_access_request(
-    payload: AccessRequestInput, db: Session = Depends(get_db)
+    payload: AccessRequestInput, request: Request, db: Session = Depends(get_db)
 ) -> AccessRequestResponse:
     """Solicitud pública: un prospecto pide acceso a la plataforma."""
+    _chequear_limite_solicitud(request)
     try:
         req = service.create_request(db, payload.model_dump())
     except service.OnboardingError as exc:

@@ -24,10 +24,12 @@ def client() -> TestClient:
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """El limitador vive en memoria y los ids se reinician por test: se limpia."""
+    """Los limitadores viven en memoria del proceso: se limpian entre tests."""
     from src.modules.sire.api.routes import _limite_conciliacion
+    from src.platform.onboarding.api import _limite_solicitudes
 
     _limite_conciliacion.clear_all()
+    _limite_solicitudes.clear_all()
     yield
 
 
