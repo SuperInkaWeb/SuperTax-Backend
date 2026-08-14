@@ -151,3 +151,59 @@ def test_actualizar_sin_permiso_da_403(db_session):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 403
+
+
+def test_subir_encola_job(db_session):
+    user, empresa = _escenario(db_session, role_key="operador")
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/scanner/upload/auto",
+            headers={"X-Company-Id": str(empresa.id)},
+            files={"file": ("recibo.pdf", b"%PDF-1.4 contenido", "application/pdf")},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["status"] == "en_cola"
+    assert isinstance(body["job_id"], int)
+
+
+def test_subir_formato_invalido_da_400(db_session):
+    user, empresa = _escenario(db_session, role_key="operador")
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/scanner/upload/auto",
+            headers={"X-Company-Id": str(empresa.id)},
+            files={"file": ("nota.txt", b"hola", "text/plain")},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 400
+
+
+def test_estado_job_encolado(db_session):
+    from src.modules.scanner.infrastructure.models import ScannerJobModel
+
+    user, empresa = _escenario(db_session, role_key="operador")
+    job = ScannerJobModel(
+        company_id=empresa.id,
+        created_by_id=user.id,
+        nombre_archivo="x.pdf",
+        storage_path="scanner/uploads/x",
+    )
+    db_session.add(job)
+    db_session.flush()
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).get(
+            f"/api/scanner/jobs/{job.id}", headers={"X-Company-Id": str(empresa.id)}
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "en_cola"
+    assert body["documento"] is None

@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from src.modules.scanner.infrastructure.models import ScannerJobStatus
+
 
 class DocumentoItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -18,3 +20,19 @@ class DocumentoItem(BaseModel):
 
 class ActualizarCamposInput(BaseModel):
     campos: dict
+
+
+class ScannerJobCreated(BaseModel):
+    """Respuesta al encolar un documento (subida)."""
+
+    job_id: int
+    status: ScannerJobStatus
+
+
+class ScannerJobStatusResponse(BaseModel):
+    """Estado de un job para el polling del frontend."""
+
+    id: int
+    status: ScannerJobStatus
+    error_message: str | None = None
+    documento: DocumentoItem | None = None

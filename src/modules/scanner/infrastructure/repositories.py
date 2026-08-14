@@ -2,7 +2,57 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.modules.scanner.infrastructure.models import DocumentoModel
+from src.modules.scanner.infrastructure.models import (
+    DocumentoModel,
+    ScannerJobModel,
+    ScannerJobStatus,
+)
+from src.platform.database.base import utcnow
+
+
+class SqlScannerJobRepository:
+    """Cola de extracción: jobs que consume el worker (scanner_worker)."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def create(
+        self, company_id: int, user_id: int, nombre_archivo: str, storage_path: str
+    ) -> ScannerJobModel:
+        job = ScannerJobModel(
+            company_id=company_id,
+            created_by_id=user_id,
+            nombre_archivo=nombre_archivo,
+            storage_path=storage_path,
+        )
+        self._db.add(job)
+        self._db.commit()
+        self._db.refresh(job)
+        return job
+
+    def get(self, job_id: int, company_id: int) -> ScannerJobModel | None:
+        return self._db.scalar(
+            select(ScannerJobModel).where(
+                ScannerJobModel.id == job_id,
+                ScannerJobModel.company_id == company_id,
+            )
+        )
+
+    def mark_completado(self, job_id: int, documento_id: int) -> None:
+        job = self._db.get(ScannerJobModel, job_id)
+        if job is not None:
+            job.status = ScannerJobStatus.completado
+            job.documento_id = documento_id
+            job.completed_at = utcnow()
+            self._db.commit()
+
+    def mark_error(self, job_id: int, mensaje: str) -> None:
+        job = self._db.get(ScannerJobModel, job_id)
+        if job is not None:
+            job.status = ScannerJobStatus.error
+            job.error_message = mensaje[:500]
+            job.completed_at = utcnow()
+            self._db.commit()
 
 
 class SqlDocumentoRepository:

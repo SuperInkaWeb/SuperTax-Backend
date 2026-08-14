@@ -7,8 +7,16 @@ subida con OCR (`/upload/auto`) se incorpora en la Fase 4b.
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from src.modules.scanner.api.schemas import ActualizarCamposInput, DocumentoItem
-from src.modules.scanner.infrastructure.repositories import SqlDocumentoRepository
+from src.modules.scanner.api.schemas import (
+    ActualizarCamposInput,
+    DocumentoItem,
+    ScannerJobCreated,
+    ScannerJobStatusResponse,
+)
+from src.modules.scanner.infrastructure.repositories import (
+    SqlDocumentoRepository,
+    SqlScannerJobRepository,
+)
 from src.platform.authorization.deps import require_module, require_permission
 from src.platform.database.session import get_db
 from src.platform.storage import get_storage
@@ -18,17 +26,48 @@ from src.platform.tenancy.current_tenant import ActiveContext
 router = APIRouter(tags=["scanner"], dependencies=[Depends(require_module("scanner"))])
 
 
-@router.post("/upload/auto")
+@router.post("/upload/auto", response_model=ScannerJobCreated, status_code=status.HTTP_201_CREATED)
 async def upload_auto(
     file: UploadFile = File(...),
     ctx: ActiveContext = Depends(require_permission("scanner.doc.create")),
     db: Session = Depends(get_db),
     storage: FileStorage = Depends(get_storage),
-) -> dict:
-    """Sube un documento, lo clasifica y extrae sus campos por OCR."""
-    from src.modules.scanner.application.extraccion import procesar_documento
+) -> ScannerJobCreated:
+    """Sube un documento y lo encola para extracción por OCR (worker aparte)."""
+    from src.modules.scanner.application.extraccion import ScannerExtractionError
+    from src.modules.scanner.application.jobs import encolar_documento
 
-    return await procesar_documento(db, storage, ctx.company.id, ctx.user.id, file)
+    contenido = await file.read()
+    try:
+        job = encolar_documento(
+            db, storage, ctx.company.id, ctx.user.id, file.filename or "archivo", contenido
+        )
+    except ScannerExtractionError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ScannerJobCreated(job_id=job.id, status=job.status)
+
+
+@router.get("/jobs/{job_id}", response_model=ScannerJobStatusResponse)
+def job_status(
+    job_id: int,
+    ctx: ActiveContext = Depends(require_permission("scanner.doc.read")),
+    db: Session = Depends(get_db),
+) -> ScannerJobStatusResponse:
+    """Estado de un job de extracción (para el polling del frontend)."""
+    job = SqlScannerJobRepository(db).get(job_id, ctx.company.id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Job no encontrado")
+    documento = None
+    if job.documento_id is not None:
+        doc = SqlDocumentoRepository(db).get(job.documento_id, ctx.company.id)
+        if doc is not None:
+            documento = DocumentoItem.model_validate(doc)
+    return ScannerJobStatusResponse(
+        id=job.id,
+        status=job.status,
+        error_message=job.error_message,
+        documento=documento,
+    )
 
 
 @router.get("/tipos-documento")
