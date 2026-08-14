@@ -19,12 +19,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U plataforma"
           --health-interval 5s --health-timeout 3s --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
     env:
       DATABASE_URL: postgresql+psycopg2://plataforma:plataforma@localhost:5432/plataforma
-      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

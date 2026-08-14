@@ -1,5 +1,5 @@
 # Infraestructura de desarrollo local.
-# Levanta Postgres + Redis + MinIO (S3). La API se corre aparte con uvicorn
+# Levanta Postgres + MinIO (S3). La API se corre aparte con uvicorn
 # para iteración rápida:  uvicorn src.main:app --reload
 #
 #   docker compose -f infra/docker-compose.yml up -d
@@ -20,11 +20,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
 
   minio:
     image: minio/minio:latest

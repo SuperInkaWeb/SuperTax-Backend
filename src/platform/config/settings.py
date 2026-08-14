@@ -31,9 +31,6 @@ class Settings(BaseSettings):
         "postgresql+psycopg2://plataforma:plataforma@localhost:5433/plataforma"
     )
 
-    # ─── Redis (cola de jobs / cache) ───
-    REDIS_URL: str = "redis://localhost:6379/0"
-
     # ─── Auth0 (identidad única) ───
     AUTH0_DOMAIN: str = ""
     AUTH0_AUDIENCE: str = ""
