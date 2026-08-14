@@ -36,6 +36,12 @@ class ReconciliationJob:
     # Resumen del resultado (presente solo cuando el job terminó).
     igv_diferencia_total: float | None = None
     tiene_alertas_rojas: bool | None = None
+    escenario_a_count: int | None = None
+    escenario_b_count: int | None = None
+    escenario_c_count: int | None = None
+    escenario_d_count: int | None = None
+    # Origen de la propuesta SUNAT usada (para mostrar reúso).
+    propuesta_origen_at: datetime | None = None
     # Disponibilidad de archivos generados.
     has_report: bool = False
     has_csv_a: bool = False

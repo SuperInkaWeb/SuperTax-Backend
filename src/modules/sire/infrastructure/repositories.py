@@ -232,6 +232,11 @@ class SqlReconciliationRepository:
                 float(result.igv_diferencia_total) if result else None
             ),
             tiene_alertas_rojas=result.tiene_alertas_rojas if result else None,
+            escenario_a_count=result.escenario_a_count if result else None,
+            escenario_b_count=result.escenario_b_count if result else None,
+            escenario_c_count=result.escenario_c_count if result else None,
+            escenario_d_count=result.escenario_d_count if result else None,
+            propuesta_origen_at=row.propuesta_origen_at,
             has_report=report is not None,
             has_csv_a=report is not None and report.csv_a_storage_path is not None,
             has_csv_b=report is not None and report.csv_b_storage_path is not None,

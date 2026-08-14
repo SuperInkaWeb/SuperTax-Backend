@@ -260,15 +260,18 @@ def upsert_credentials(
     db: Session = Depends(get_db),
 ) -> CredentialsStatusResponse:
     repo = SqlCredentialsRepository(db)
-    set_credentials(
-        repo,
-        company_id=ctx.company.id,
-        user_id=ctx.user.id,
-        usuario_sol=payload.usuario_sol,
-        clave_sol=payload.clave_sol,
-        client_id=payload.client_id,
-        client_secret=payload.client_secret,
-    )
+    try:
+        set_credentials(
+            repo,
+            company_id=ctx.company.id,
+            user_id=ctx.user.id,
+            usuario_sol=payload.usuario_sol,
+            clave_sol=payload.clave_sol,
+            client_id=payload.client_id,
+            client_secret=payload.client_secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return CredentialsStatusResponse.model_validate(
         get_credentials_status(repo, ctx.company.id)
     )

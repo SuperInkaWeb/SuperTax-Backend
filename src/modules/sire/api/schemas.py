@@ -20,6 +20,11 @@ class JobResponse(BaseModel):
     error_message: str | None = None
     igv_diferencia_total: float | None = None
     tiene_alertas_rojas: bool | None = None
+    escenario_a_count: int | None = None
+    escenario_b_count: int | None = None
+    escenario_c_count: int | None = None
+    escenario_d_count: int | None = None
+    propuesta_origen_at: datetime | None = None
     has_report: bool = False
     has_csv_a: bool = False
     has_csv_b: bool = False
@@ -29,9 +34,10 @@ class JobResponse(BaseModel):
 
 class CredentialsInput(BaseModel):
     usuario_sol: str = Field(min_length=1, max_length=50)
-    clave_sol: str = Field(min_length=1)
     client_id: str = Field(min_length=1, max_length=100)
-    client_secret: str = Field(min_length=1)
+    # Secretos: vacío = conservar el ya guardado (actualización parcial).
+    clave_sol: str = ""
+    client_secret: str = ""
 
 
 class CredentialsStatusResponse(BaseModel):
