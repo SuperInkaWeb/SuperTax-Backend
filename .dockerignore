@@ -1,0 +1,26 @@
+# Entornos virtuales y artefactos de Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Control de versiones e IDE
+.git/
+.github/
+.idea/
+.vscode/
+
+# Secretos y storage local (nunca dentro de la imagen)
+.env
+.env.local
+/storage/
+
+# Tests y documentación (no se necesitan en runtime)
+tests/
+*.md
+scripts/
