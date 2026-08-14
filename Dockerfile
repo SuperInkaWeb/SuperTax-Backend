@@ -16,4 +16,6 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .
 COPY . .
 
 EXPOSE 8000
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Forma shell para que $PORT (inyectado por Railway/Render) se expanda; 8000 por
+# defecto en local. El servicio worker sobreescribe este comando en el deploy.
+CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
