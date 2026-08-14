@@ -70,7 +70,14 @@ class Settings(BaseSettings):
     SCANNER_TESSERACT_CMD: str = "tesseract"
 
     # ─── CORS (orígenes del frontend permitidos) ───
-    CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    # Lista separada por comas (nunca "*" en producción). Se usa texto plano en
+    # vez de JSON para que la variable de entorno sea simple y robusta:
+    #   CORS_ORIGINS=https://app.vercel.app,https://otro.com
+    CORS_ORIGINS: str = "http://localhost:5173"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [origen.strip() for origen in self.CORS_ORIGINS.split(",") if origen.strip()]
 
     @model_validator(mode="after")
     def _exigir_encryption_key_en_produccion(self) -> "Settings":

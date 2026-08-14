@@ -126,7 +126,7 @@ En Railway crea el proyecto desde el repo `plataforma-backend`. En
 
   | Variable | Valor |
   |---|---|
-  | `CORS_ORIGINS` | `["https://TU-APP.vercel.app"]` *(se completa en el paso 5)* |
+  | `CORS_ORIGINS` | `https://TU-APP.vercel.app` *(se completa en el paso 5; varios separados por coma)* |
   | `DRIVE_REDIRECT_URI` | `https://<dominio-web>/api/sunat/drive/callback` |
   | `GOOGLE_CLIENT_ID` | *(opcional — solo si usas export a Google Drive)* |
   | `GOOGLE_CLIENT_SECRET` | *(opcional)* |
@@ -202,10 +202,10 @@ UPDATE core.users SET is_platform_admin = true WHERE email = 'tu-correo@ejemplo.
 1. **Railway `web` → CORS:** pon el dominio de Vercel en `CORS_ORIGINS`:
 
    ```
-   CORS_ORIGINS=["https://plataforma.vercel.app"]
+   CORS_ORIGINS=https://plataforma.vercel.app
    ```
 
-   (Formato lista JSON. Puedes incluir varios: `["https://a.vercel.app","https://b.com"]`.)
+   (Texto separado por comas. Puedes incluir varios: `https://a.vercel.app,https://b.com`.)
 
 2. **Vercel → API:** confirma que `VITE_API_URL` apunta al dominio del `web` de Railway
    y haz **redeploy**.
