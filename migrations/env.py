@@ -17,6 +17,7 @@ from src.platform.authorization import models as _authz_models  # noqa: E402, F4
 from src.platform.config.settings import settings
 from src.platform.database.base import Base
 from src.platform.onboarding import models as _onboarding_models  # noqa: E402, F401
+from src.platform.support import models as _support_models  # noqa: E402, F401
 from src.platform.tenancy import models as _tenancy_models  # noqa: E402, F401
 from src.platform.users import models as _users_models  # noqa: E402, F401
 
