@@ -15,7 +15,9 @@ El camino vivo contra SUNAT requiere credenciales reales; la lógica de decisió
 """
 import asyncio
 import logging
+import multiprocessing
 import os
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -44,6 +46,21 @@ from src.platform.tenancy.models import Company
 logger = logging.getLogger("sire.orchestrator")
 
 _TICKET_FRESCURA_HORAS = 24
+
+# El motor de conciliación (pandas/openpyxl) se ejecuta en un subproceso que se
+# crea y destruye por cada job: así toda su memoria (DataFrames grandes) vuelve
+# al SO al terminar, en vez de acumularse en el worker de larga vida. Se usa
+# "spawn" (no "fork") para arrancar un intérprete limpio y evitar deadlocks al
+# forkear un proceso con hilos/async.
+_MP_CONTEXT = multiprocessing.get_context("spawn")
+
+
+async def _en_subproceso(func, payload):
+    """Corre `func(payload)` (CPU-bound) en un subproceso efímero y devuelve su
+    resultado. El subproceso muere al salir del `with`, liberando su memoria."""
+    loop = asyncio.get_running_loop()
+    with ProcessPoolExecutor(max_workers=1, mp_context=_MP_CONTEXT) as executor:
+        return await loop.run_in_executor(executor, func, payload)
 
 
 def _es_fresco(momento: datetime | None) -> bool:
@@ -232,7 +249,7 @@ async def procesar_job(db: Session, job_id: int) -> None:
                 "saved_mapping": saved_mapping,
                 "periodo": periodo,
             }
-            meses = await asyncio.to_thread(extraer_periodos_emision, sondeo)
+            meses = await _en_subproceso(extraer_periodos_emision, sondeo)
             tickets_previos = dict(job.extra_tickets or {})
             job_fresco = _es_fresco(job.created_at)
             candidatos_reuso: dict[str, str] = (
@@ -304,9 +321,9 @@ async def procesar_job(db: Session, job_id: int) -> None:
         # la conexión tomada la deja inactiva y proveedores como Neon la cierran,
         # rompiendo el guardado final. save_success reabre una fresca (pool_pre_ping).
         db.commit()
-        # El motor (pandas/openpyxl) es CPU-bound: se corre en un hilo aparte
-        # para no bloquear el loop asíncrono del worker.
-        result = await asyncio.to_thread(procesar_conciliacion, payload)
+        # El motor (pandas/openpyxl) es CPU-bound y pesado en memoria: se corre en
+        # un subproceso efímero que muere al terminar, liberando su RAM al SO.
+        result = await _en_subproceso(procesar_conciliacion, payload)
         repo.save_success(job_id, result)
     except Exception as exc:  # se registra y se refleja como error en el job
         db.rollback()  # descarta la conexión/transacción rota antes de reescribir el job

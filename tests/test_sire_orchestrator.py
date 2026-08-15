@@ -89,10 +89,16 @@ def _mock_sunat(monkeypatch, contador):
     async def descargar(_get_token, _num_ticket, periodo):
         return f"/tmp/no-existe-{periodo}.txt"
 
+    # En producción el motor corre en un subproceso efímero (aísla memoria); en
+    # los tests se ejecuta in-process para que los mocks de arriba sean visibles.
+    async def _inline(func, payload):
+        return func(payload)
+
     monkeypatch.setattr(orch, "get_sunat_token", token)
     monkeypatch.setattr(sunat_compras, "solicitar_export_compras", solicitar)
     monkeypatch.setattr(sunat_compras, "consultar_ticket_compras", consultar)
     monkeypatch.setattr(sunat_compras, "descargar_ticket_compras", descargar)
+    monkeypatch.setattr(orch, "_en_subproceso", _inline)
     monkeypatch.setattr(orch, "procesar_conciliacion", lambda _payload: _resultado_falso())
 
 
