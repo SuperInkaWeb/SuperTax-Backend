@@ -261,6 +261,11 @@ async def procesar_job(db: Session, job_id: int) -> None:
             )
             extra_tickets: dict[str, str] = {}
 
+            # Se libera la conexión antes del bucle largo de SUNAT (una propuesta
+            # por cada mes rezagado, minutos cada una): mantenerla tomada la deja
+            # inactiva y Neon la cierra. El guardado posterior reabre una fresca.
+            db.commit()
+
             for mes in meses:
                 num_mes: str | None = None
                 # Reanudar: ticket que este job ya generó para el mes.
