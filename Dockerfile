@@ -8,9 +8,11 @@ WORKDIR /app
 # Dependencias de sistema:
 # - libpq5: runtime de PostgreSQL para psycopg2.
 # - tesseract-ocr + tesseract-ocr-spa: OCR del módulo Scanner (usa lang="spa").
+# - p7zip-full: extrae los ZIP particionados (.z01, .z02, …) que SUNAT entrega
+#   en las propuestas SIRE grandes (provee los binarios 7z/7za).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libpq5 tesseract-ocr tesseract-ocr-spa \
+        libpq5 tesseract-ocr tesseract-ocr-spa p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
