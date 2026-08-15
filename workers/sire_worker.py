@@ -52,8 +52,36 @@ def _process(job_id: int) -> None:
         db.close()
 
 
+def _marcar_interrumpidos() -> None:
+    """Al arrancar, marca como 'error' los jobs que quedaron en 'procesando' por un
+    reinicio del worker: nadie los retoma (solo se reclaman los 'en_cola'). Asume
+    un único worker por cola (nuestro despliegue: un worker-sire)."""
+    db = SessionLocal()
+    try:
+        stale = (
+            db.execute(
+                select(ReconciliationJobModel).where(
+                    ReconciliationJobModel.status == JobStatus.procesando
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for job in stale:
+            job.status = JobStatus.error
+            job.error_message = (
+                "El proceso se interrumpió (reinicio del worker). Vuelve a intentarlo."
+            )
+        if stale:
+            db.commit()
+            logger.warning("Marcados %s job(s) interrumpidos como error", len(stale))
+    finally:
+        db.close()
+
+
 def run() -> None:
     logger.info("Worker SIRE iniciado (poll cada %ss)", POLL_SECONDS)
+    _marcar_interrumpidos()
     while True:
         # Un fallo transitorio (p. ej. caída momentánea de la DB) no debe tumbar
         # el worker: se registra y se reintenta tras la pausa. Los errores de un
