@@ -3,19 +3,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+import src.models_registry  # noqa: F401  (registra todas las tablas en Base.metadata)
 from src.main import app
-
-# Registrar los modelos (Core + módulos) en Base.metadata
-from src.modules.scanner.infrastructure import models as _scanner  # noqa: F401
-from src.modules.sire.infrastructure import models as _sire  # noqa: F401
-from src.modules.sunat.infrastructure import models as _sunat  # noqa: F401
-from src.platform.authorization import models as _authz  # noqa: F401
 from src.platform.config.settings import settings
 from src.platform.database.base import Base
-from src.platform.onboarding import models as _onboarding  # noqa: F401
-from src.platform.support import models as _support  # noqa: F401
-from src.platform.tenancy import models as _tenancy  # noqa: F401
-from src.platform.users import models as _users  # noqa: F401
 
 
 @pytest.fixture

@@ -12,6 +12,7 @@ import time
 
 from sqlalchemy import select
 
+import src.models_registry  # noqa: F401  (registra todos los modelos: FKs a core.*)
 from src.modules.sunat.infrastructure.job_queue import procesar_job
 from src.modules.sunat.infrastructure.models import SunatJobModel, SunatJobStatus
 from src.platform.database.session import SessionLocal

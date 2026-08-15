@@ -8,18 +8,9 @@ entorno) y el `metadata` de la Base declarativa. Conforme se creen modelos
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# Modelos del núcleo Core — su import registra las tablas en Base.metadata
-# para que `--autogenerate` las detecte.
-from src.modules.scanner.infrastructure import models as _scanner_models  # noqa: E402, F401
-from src.modules.sire.infrastructure import models as _sire_models  # noqa: E402, F401
-from src.modules.sunat.infrastructure import models as _sunat_models  # noqa: E402, F401
-from src.platform.authorization import models as _authz_models  # noqa: E402, F401
+import src.models_registry  # noqa: F401  (registra todas las tablas en Base.metadata)
 from src.platform.config.settings import settings
 from src.platform.database.base import Base
-from src.platform.onboarding import models as _onboarding_models  # noqa: E402, F401
-from src.platform.support import models as _support_models  # noqa: E402, F401
-from src.platform.tenancy import models as _tenancy_models  # noqa: E402, F401
-from src.platform.users import models as _users_models  # noqa: E402, F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

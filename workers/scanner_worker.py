@@ -12,6 +12,7 @@ import time
 
 from sqlalchemy import select
 
+import src.models_registry  # noqa: F401  (registra todos los modelos: FKs a core.*)
 from src.modules.scanner.application.jobs import procesar_job
 from src.modules.scanner.infrastructure.models import ScannerJobModel, ScannerJobStatus
 from src.platform.database.session import SessionLocal
