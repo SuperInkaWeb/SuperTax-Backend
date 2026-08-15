@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.platform.config.settings import settings
 
-engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, future=True)
+# pool_pre_ping: valida (y reconecta) la conexión al sacarla del pool.
+# pool_recycle: recicla conexiones ociosas > 5 min (Neon cierra las inactivas).
+engine = create_engine(
+    settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=300, future=True
+)
 SessionLocal = sessionmaker(
     bind=engine, autoflush=False, autocommit=False, class_=Session
 )

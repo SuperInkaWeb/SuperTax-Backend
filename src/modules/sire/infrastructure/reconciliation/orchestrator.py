@@ -299,11 +299,17 @@ async def procesar_job(db: Session, job_id: int) -> None:
             "company_id": company_id,
             "job_id": job_id,
         }
+        # Se libera la conexión de la BD antes del trabajo CPU-bound: la
+        # conciliación (pandas/openpyxl) tarda minutos sin tocar la BD; mantener
+        # la conexión tomada la deja inactiva y proveedores como Neon la cierran,
+        # rompiendo el guardado final. save_success reabre una fresca (pool_pre_ping).
+        db.commit()
         # El motor (pandas/openpyxl) es CPU-bound: se corre en un hilo aparte
         # para no bloquear el loop asíncrono del worker.
         result = await asyncio.to_thread(procesar_conciliacion, payload)
         repo.save_success(job_id, result)
     except Exception as exc:  # se registra y se refleja como error en el job
+        db.rollback()  # descarta la conexión/transacción rota antes de reescribir el job
         logger.exception("Job de conciliación #%s falló", job_id)
         mensaje = (
             str(exc)
