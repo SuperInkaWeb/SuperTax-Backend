@@ -86,7 +86,7 @@ No inventes datos. Solo incluye lo que puedes leer en la imagen.
 Responde solo el JSON, sin texto adicional."""
 
     response = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        model=os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
         messages=[
             {
                 "role": "user",
