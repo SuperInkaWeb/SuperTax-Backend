@@ -18,6 +18,7 @@ import logging
 import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -173,12 +174,40 @@ async def consultar_propuesta_disponible(
     }
 
 
+@dataclass
+class _JobSnapshot:
+    """Datos del job/empresa leídos a variables planas al inicio del proceso.
+
+    A partir de la lectura inicial NO se vuelve a tocar el ORM `job`/`company`:
+    las esperas de SUNAT (~30 min) no mantienen ninguna conexión a la BD, y cada
+    escritura es un burst breve. Así una BD serverless (Neon) no corta conexiones
+    ociosas a mitad de un job largo — mismo patrón que el proyecto original.
+    """
+    company_id: int
+    ruc: str
+    razon_social: str
+    periodo: str
+    tipo_libro: TipoLibro
+    sin_sire: bool
+    reutilizar: bool
+    mapeo_config: dict | None
+    saved_mapping: dict | None
+    cobertura_fechas: list | None
+    empresa_file_path: str | None
+    empresa_filename: str
+    num_ticket: str | None
+    propuesta_origen_at: datetime | None
+    created_at: datetime
+    extra_tickets: dict[str, str]
+
+
 async def procesar_job(db: Session, job_id: int) -> None:
     repo = SqlReconciliationRepository(db)
+
+    # ── Lectura inicial (único momento en que se toca el ORM) ──
     job = db.get(ReconciliationJobModel, job_id)
     if job is None:
         return
-
     company = db.get(Company, job.company_id)
     creds = db.scalar(
         select(SireCredentialsModel).where(
@@ -189,83 +218,93 @@ async def procesar_job(db: Session, job_id: int) -> None:
         repo.mark_error(job_id, "Faltan la empresa o las credenciales SUNAT")
         return
 
-    company_id = job.company_id
-    ruc = company.ruc
-    periodo = job.periodo
     tipo_libro = job.tipo_libro
-    es_compras = tipo_libro == TipoLibro.compras
-    sin_sire = bool(job.sin_sire) and es_compras
-    reutilizar = bool(job.reutilizar_propuesta)
-
-    mapeo_config = job.mapeo_config
-    saved_mapping = (
-        SqlFileMappingRepository(db).get_config(company_id, tipo_libro.value)
-        if mapeo_config is None
-        else None
+    snap = _JobSnapshot(
+        company_id=job.company_id,
+        ruc=company.ruc,
+        razon_social=company.razon_social,
+        periodo=job.periodo,
+        tipo_libro=tipo_libro,
+        sin_sire=bool(job.sin_sire) and tipo_libro == TipoLibro.compras,
+        reutilizar=bool(job.reutilizar_propuesta),
+        mapeo_config=job.mapeo_config,
+        saved_mapping=(
+            SqlFileMappingRepository(db).get_config(job.company_id, tipo_libro.value)
+            if job.mapeo_config is None
+            else None
+        ),
+        cobertura_fechas=job.cobertura_fechas,
+        empresa_file_path=job.empresa_file_path,
+        empresa_filename=job.empresa_filename or "",
+        num_ticket=job.num_ticket,
+        propuesta_origen_at=job.propuesta_origen_at,
+        created_at=job.created_at,
+        extra_tickets=dict(job.extra_tickets or {}),
     )
-    cobertura_fechas = job.cobertura_fechas
-
-    get_token = _token_factory(company_id, creds, ruc)
+    get_token = _token_factory(snap.company_id, creds, snap.ruc)
     solicitar, consultar, descargar = _clientes(tipo_libro)
+    # Cierra la transacción de lectura → libera la conexión antes de las esperas.
+    db.commit()
 
     sunat_tmp_path: str | None = None
     sunat_extra_paths: dict[str, str] = {}
     meses_no_disponibles: list[str] = []
+    propuesta_origen_at = snap.propuesta_origen_at
     try:
         # 1. Ticket principal: reanudar (propio) → reutilizar (otro job) → solicitar.
         num_ticket: str | None = None
-        if job.num_ticket and _es_fresco(job.propuesta_origen_at or job.created_at):
-            if _ticket_vivo(await consultar(get_token, job.num_ticket, periodo)):
-                num_ticket = job.num_ticket
-        if num_ticket is None and reutilizar:
+        if snap.num_ticket and _es_fresco(snap.propuesta_origen_at or snap.created_at):
+            if _ticket_vivo(await consultar(get_token, snap.num_ticket, snap.periodo)):
+                num_ticket = snap.num_ticket
+        if num_ticket is None and snap.reutilizar:
             candidato = repo.buscar_ticket_fresco(
-                company_id, periodo, tipo_libro, exclude_job_id=job_id
+                snap.company_id, snap.periodo, tipo_libro, exclude_job_id=job_id
             )
-            if candidato is not None and _ticket_terminado(
-                await consultar(get_token, candidato.num_ticket, periodo)
-            ):
-                num_ticket = candidato.num_ticket
-                job.num_ticket = num_ticket
-                job.propuesta_origen_at = (
-                    candidato.propuesta_origen_at or candidato.created_at
-                )
-                db.commit()
-        if num_ticket is None:
-            num_ticket = await solicitar(get_token, periodo)
-            job.num_ticket = num_ticket
-            job.propuesta_origen_at = utcnow()
+            # Se extraen sus campos a planos antes de liberar la conexión.
+            cand_ticket = candidato.num_ticket if candidato is not None else None
+            cand_origen = (
+                candidato.propuesta_origen_at or candidato.created_at
+                if candidato is not None
+                else None
+            )
             db.commit()
+            if cand_ticket is not None and _ticket_terminado(
+                await consultar(get_token, cand_ticket, snap.periodo)
+            ):
+                num_ticket = cand_ticket
+                propuesta_origen_at = cand_origen
+                repo.set_ticket_principal(job_id, num_ticket, cand_origen)
+        if num_ticket is None:
+            num_ticket = await solicitar(get_token, snap.periodo)
+            propuesta_origen_at = utcnow()
+            repo.set_ticket_principal(job_id, num_ticket, propuesta_origen_at)
 
-        sunat_tmp_path = await descargar(get_token, num_ticket, periodo)
+        sunat_tmp_path = await descargar(get_token, num_ticket, snap.periodo)
 
         # 2. Compras "sin SIRE": propuestas de meses anteriores para reubicar
         #    los comprobantes rezagados en el Escenario A.
-        if sin_sire:
+        if snap.sin_sire:
             sondeo = {
-                "empresa_file_path": job.empresa_file_path,
-                "empresa_filename": job.empresa_filename or "",
+                "empresa_file_path": snap.empresa_file_path,
+                "empresa_filename": snap.empresa_filename,
                 "tipo_libro": tipo_libro.value,
-                "mapeo_config": mapeo_config,
-                "saved_mapping": saved_mapping,
-                "periodo": periodo,
+                "mapeo_config": snap.mapeo_config,
+                "saved_mapping": snap.saved_mapping,
+                "periodo": snap.periodo,
             }
             meses = await _en_subproceso(extraer_periodos_emision, sondeo)
-            tickets_previos = dict(job.extra_tickets or {})
-            job_fresco = _es_fresco(job.created_at)
+            tickets_previos = snap.extra_tickets
+            job_fresco = _es_fresco(snap.created_at)
             candidatos_reuso: dict[str, str] = (
                 repo.buscar_tickets_frescos_multi(
-                    company_id, meses, tipo_libro, exclude_job_id=job_id
+                    snap.company_id, meses, tipo_libro, exclude_job_id=job_id
                 )
-                if reutilizar
+                if snap.reutilizar
                 else {}
             )
+            db.commit()  # libera la conexión antes del bucle largo de SUNAT
+
             extra_tickets: dict[str, str] = {}
-
-            # Se libera la conexión antes del bucle largo de SUNAT (una propuesta
-            # por cada mes rezagado, minutos cada una): mantenerla tomada la deja
-            # inactiva y Neon la cierra. El guardado posterior reabre una fresca.
-            db.commit()
-
             for mes in meses:
                 num_mes: str | None = None
                 # Reanudar: ticket que este job ya generó para el mes.
@@ -299,39 +338,33 @@ async def procesar_job(db: Session, job_id: int) -> None:
 
             meses_no_disponibles = [m for m in meses if m not in sunat_extra_paths]
             if extra_tickets:
-                job.extra_tickets = extra_tickets
-                db.commit()
+                repo.set_extra_tickets(job_id, extra_tickets)
 
         payload = {
-            "empresa_file_path": job.empresa_file_path,
-            "empresa_filename": job.empresa_filename or "",
+            "empresa_file_path": snap.empresa_file_path,
+            "empresa_filename": snap.empresa_filename,
             "sunat_tmp_path": sunat_tmp_path,
             "tipo_libro": tipo_libro.value,
-            "mapeo_config": mapeo_config,
-            "saved_mapping": saved_mapping,
-            "cobertura_fechas": cobertura_fechas,
-            "cobertura_desc": _descripcion_cobertura(cobertura_fechas),
-            "sin_sire": sin_sire,
+            "mapeo_config": snap.mapeo_config,
+            "saved_mapping": snap.saved_mapping,
+            "cobertura_fechas": snap.cobertura_fechas,
+            "cobertura_desc": _descripcion_cobertura(snap.cobertura_fechas),
+            "sin_sire": snap.sin_sire,
             "sunat_extra_paths": sunat_extra_paths,
             "sunat_extra_fallidos": meses_no_disponibles,
-            "ruc": ruc,
-            "empresa_nombre": company.razon_social,
-            "periodo": periodo,
-            "propuesta_origen_at": job.propuesta_origen_at,
-            "company_id": company_id,
+            "ruc": snap.ruc,
+            "empresa_nombre": snap.razon_social,
+            "periodo": snap.periodo,
+            "propuesta_origen_at": propuesta_origen_at,
+            "company_id": snap.company_id,
             "job_id": job_id,
         }
-        # Se libera la conexión de la BD antes del trabajo CPU-bound: la
-        # conciliación (pandas/openpyxl) tarda minutos sin tocar la BD; mantener
-        # la conexión tomada la deja inactiva y proveedores como Neon la cierran,
-        # rompiendo el guardado final. save_success reabre una fresca (pool_pre_ping).
-        db.commit()
-        # El motor (pandas/openpyxl) es CPU-bound y pesado en memoria: se corre en
-        # un subproceso efímero que muere al terminar, liberando su RAM al SO.
+        # El motor (pandas/openpyxl) es CPU-bound y pesado en memoria: corre en un
+        # subproceso efímero que muere al terminar, liberando su RAM al SO.
         result = await _en_subproceso(procesar_conciliacion, payload)
         repo.save_success(job_id, result)
     except Exception as exc:  # se registra y se refleja como error en el job
-        db.rollback()  # descarta la conexión/transacción rota antes de reescribir el job
+        db.rollback()  # descarta cualquier transacción rota antes de reescribir el job
         logger.exception("Job de conciliación #%s falló", job_id)
         mensaje = (
             str(exc)

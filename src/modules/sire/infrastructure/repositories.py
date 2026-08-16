@@ -1,5 +1,5 @@
 """Repositorios SQLAlchemy del módulo SIRE (schema `sire`)."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -157,6 +157,23 @@ class SqlReconciliationRepository:
         if row is not None:
             row.status = JobStatus.error
             row.error_message = message[:1000]
+            self._db.commit()
+
+    def set_ticket_principal(
+        self, job_id: int, num_ticket: str, propuesta_origen_at: datetime
+    ) -> None:
+        """Persiste el ticket de la propuesta principal (escritura breve)."""
+        row = self._db.get(ReconciliationJobModel, job_id)
+        if row is not None:
+            row.num_ticket = num_ticket
+            row.propuesta_origen_at = propuesta_origen_at
+            self._db.commit()
+
+    def set_extra_tickets(self, job_id: int, extra_tickets: dict[str, str]) -> None:
+        """Persiste los tickets de meses rezagados ('sin SIRE') para el reanudar."""
+        row = self._db.get(ReconciliationJobModel, job_id)
+        if row is not None:
+            row.extra_tickets = extra_tickets
             self._db.commit()
 
     def save_success(self, job_id: int, result: dict) -> None:
