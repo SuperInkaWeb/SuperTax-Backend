@@ -109,8 +109,10 @@ Responde solo el JSON, sin texto adicional."""
         max_completion_tokens=2048,
     )
 
-    texto = response.choices[0].message.content.strip()
+    texto = (response.choices[0].message.content or "").strip()
 
+    # Salvaguarda: si algún modelo aún devolviera razonamiento, se quita el <think>.
+    texto = re.sub(r"<think>.*?</think>", "", texto, flags=re.DOTALL).strip()
     # Limpiar posibles ```json ... ``` que el modelo a veces agrega
     texto = re.sub(r"^```(?:json)?\s*", "", texto)
     texto = re.sub(r"\s*```$", "", texto)
@@ -143,7 +145,7 @@ Responde solo el JSON, sin texto adicional."""
         "campos":            resultado.get("campos", {}),
         "procesado_con_ia":  True,
         "advertencia": (
-            "⚠️ Este documento fue procesado con inteligencia artificial "
+            "Este documento fue procesado con inteligencia artificial "
             "porque estaba en mal estado o era ilegible. "
             "Los datos extraídos pueden contener errores. "
             "Verifica la información manualmente antes de usarla."
