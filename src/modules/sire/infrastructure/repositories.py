@@ -241,6 +241,9 @@ class SqlReconciliationRepository:
             empresa_filename=row.empresa_filename,
             completed_at=row.completed_at,
             error_message=row.error_message,
+            can_resume=(
+                row.status == JobStatus.error and row.empresa_file_path is not None
+            ),
             igv_diferencia_total=(
                 float(result.igv_diferencia_total) if result else None
             ),

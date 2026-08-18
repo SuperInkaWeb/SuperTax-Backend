@@ -33,6 +33,8 @@ class ReconciliationJob:
     empresa_filename: str | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
+    # True si el job puede reanudarse: está en error y aún conserva su archivo.
+    can_resume: bool = False
     # Resumen del resultado (presente solo cuando el job terminó).
     igv_diferencia_total: float | None = None
     tiene_alertas_rojas: bool | None = None

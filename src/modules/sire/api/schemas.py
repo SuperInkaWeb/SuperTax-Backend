@@ -18,6 +18,7 @@ class JobResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     error_message: str | None = None
+    can_resume: bool = False
     igv_diferencia_total: float | None = None
     tiene_alertas_rojas: bool | None = None
     escenario_a_count: int | None = None
