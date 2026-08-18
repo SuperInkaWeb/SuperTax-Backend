@@ -53,6 +53,7 @@ class SqlReconciliationRepository:
         periodo: str,
         tipo_libro: TipoLibro,
         filename: str | None,
+        empresa_file_path: str,
         sin_sire: bool = False,
         mapeo_config: dict | None = None,
         cobertura_fechas: list | None = None,
@@ -65,6 +66,7 @@ class SqlReconciliationRepository:
             tipo_libro=tipo_libro,
             status=JobStatus.en_cola,
             empresa_filename=filename,
+            empresa_file_path=empresa_file_path,
             sin_sire=sin_sire,
             mapeo_config=mapeo_config,
             cobertura_fechas=cobertura_fechas,
@@ -126,12 +128,6 @@ class SqlReconciliationRepository:
         ).all()
         # Ascendente: el más reciente (id mayor) sobrescribe → gana el último.
         return {row.periodo: row.num_ticket for row in rows if row.num_ticket}
-
-    def set_file_path(self, job_id: int, storage_path: str) -> None:
-        row = self._db.get(ReconciliationJobModel, job_id)
-        if row is not None:
-            row.empresa_file_path = storage_path
-            self._db.commit()
 
     def requeue_failed(self, job_id: int, company_id: int) -> ReconciliationJob | None:
         """Reencola un job en error para que el worker lo reprocese. None si no existe."""

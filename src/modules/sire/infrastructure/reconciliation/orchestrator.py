@@ -217,6 +217,16 @@ async def procesar_job(db: Session, job_id: int) -> None:
     if company is None or creds is None:
         repo.mark_error(job_id, "Faltan la empresa o las credenciales SUNAT")
         return
+    # El archivo de la empresa se libera del storage tras una conciliación exitosa;
+    # si falta (p. ej. al reanudar un job cuyo archivo ya se limpió) se corta aquí
+    # con un mensaje claro, antes de gastar minutos consultando SUNAT.
+    if not job.empresa_file_path:
+        repo.mark_error(
+            job_id,
+            "El archivo de la empresa ya no está disponible. Vuelve a crear la "
+            "conciliación subiéndolo de nuevo.",
+        )
+        return
 
     tipo_libro = job.tipo_libro
     snap = _JobSnapshot(

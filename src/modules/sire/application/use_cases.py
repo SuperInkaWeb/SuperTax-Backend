@@ -5,6 +5,8 @@ Orquestan el dominio a través de sus puertos (no conocen SQLAlchemy ni FastAPI)
 El procesamiento de la conciliación (motor SUNAT + worker) se incorpora en el
 sub-paso 2b-2; aquí están la lectura y la creación del job.
 """
+import uuid
+
 from src.modules.sire.domain.entities import ReconciliationJob, TipoLibro
 from src.modules.sire.domain.ports import ReconciliationRepository
 from src.platform.storage.base import FileStorage
@@ -62,18 +64,21 @@ def create_reconciliation_job(
         raise ValueError("El archivo está vacío")
 
     sin_sire = bool(sin_sire) and tipo_libro == TipoLibro.compras
-    job = repo.create(
+    # El archivo se sube ANTES de insertar el job, con una ruta única que no
+    # depende del id. Así el job se crea de forma atómica ya con su archivo y en
+    # estado 'en_cola': el worker nunca puede reclamarlo sin `empresa_file_path`
+    # (evita la race condition en que lo tomaba a mitad de la subida a storage).
+    storage_path = f"sire/uploads/{company_id}/{uuid.uuid4().hex}/{filename or 'empresa.csv'}"
+    storage.save(storage_path, content)
+    return repo.create(
         company_id,
         user_id,
         periodo,
         tipo_libro,
         filename,
+        empresa_file_path=storage_path,
         sin_sire=sin_sire,
         mapeo_config=mapeo_config,
         cobertura_fechas=cobertura_fechas,
         reutilizar_propuesta=reutilizar_propuesta,
     )
-    storage_path = f"sire/uploads/{company_id}/{job.id}/{filename or 'empresa.csv'}"
-    storage.save(storage_path, content)
-    repo.set_file_path(job.id, storage_path)
-    return job
