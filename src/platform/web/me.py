@@ -12,7 +12,7 @@ from src.platform.authorization.entitlements import active_module_keys
 from src.platform.authorization.models import Role
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
-from src.platform.tenancy.models import Company, Membership
+from src.platform.tenancy.models import Company, Membership, MembershipStatus
 from src.platform.users.models import User
 
 router = APIRouter(tags=["me"])
@@ -24,7 +24,10 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) ->
         select(Company, Role.key)
         .join(Membership, Membership.company_id == Company.id)
         .join(Role, Role.id == Membership.role_id)
-        .where(Membership.user_id == user.id)
+        .where(
+            Membership.user_id == user.id,
+            Membership.status == MembershipStatus.activo,
+        )
     ).all()
 
     modulos = active_module_keys(db, [company.id for company, _ in rows])

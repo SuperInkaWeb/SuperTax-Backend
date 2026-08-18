@@ -19,6 +19,7 @@ from src.platform.support.api import router as tickets_router
 from src.platform.tenancy.companies_api import router as companies_router
 from src.platform.tenancy.members_api import router as members_router
 from src.platform.tenancy.my_companies_api import router as my_companies_router
+from src.platform.tenancy.team_api import router as team_router
 from src.platform.web.errors import register_error_handlers
 from src.platform.web.health import router as health_router
 from src.platform.web.me import router as me_router
@@ -31,6 +32,7 @@ _CORE_ROUTERS = (
     companies_router,
     my_companies_router,
     members_router,
+    team_router,
     roles_router,
     tickets_router,
 )
