@@ -149,7 +149,16 @@ def procesar_job(storage: FileStorage, job_id: str) -> None:
 
         resultados = automatizar(full_config, _Sink(writer, "log"), _Sink(writer, "progress"))
         _guardar_resultado_job(job_id, company_id, user_id, resultados or [])
-        estado = SunatJobStatus.cancelado if cancelar.is_set() else SunatJobStatus.completado
+        if cancelar.is_set():
+            estado = SunatJobStatus.cancelado
+        elif not resultados:
+            # El motor terminó sin procesar ningún comprobante: login, Excel o
+            # navegador fallaron (en esos casos el motor devuelve []). Se refleja
+            # como error real en vez de un "completado" engañoso con 0 resultados.
+            writer.write("log", "[ x ] No se descargó ningún comprobante; el job queda en error.")
+            estado = SunatJobStatus.error
+        else:
+            estado = SunatJobStatus.completado
     except Exception as exc:
         writer.write("log", f"[ x ] El proceso terminó inesperadamente: {str(exc)[:120]}")
         logger.error("Job SUNAT %s falló", job_id, exc_info=True)
