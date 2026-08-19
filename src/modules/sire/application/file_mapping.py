@@ -6,6 +6,7 @@ formato guardado. Una conciliación usa el formato guardado si existe; solo el
 apartado "Formato de archivo" (o el checkbox explícito) lo persiste.
 """
 from src.modules.sire.infrastructure.models import CompanyFileMappingModel
+from src.modules.sire.infrastructure.parser.empresa_file import normalizar_content
 from src.modules.sire.infrastructure.parser.mapeo import (
     analizar_archivo,
     validar_mapeo,
@@ -39,6 +40,7 @@ def _saved_response(m: CompanyFileMappingModel | None) -> dict | None:
 def analizar(
     repo: SqlFileMappingRepository, company_id: int, tipo_libro: str, content: bytes
 ) -> dict:
+    content = normalizar_content(content)  # Excel → texto; CSV/TXT pasa sin cambios
     saved = repo.get(company_id, tipo_libro)
     saved_config = (
         mapping_a_config(saved)
@@ -53,7 +55,7 @@ def analizar(
 
 
 def validar(content: bytes, cfg: dict, tipo_libro: str) -> dict:
-    return validar_mapeo(content, cfg, tipo_libro)
+    return validar_mapeo(normalizar_content(content), cfg, tipo_libro)
 
 
 def guardar(
@@ -63,6 +65,7 @@ def guardar(
     cfg: dict,
     content: bytes,
 ) -> dict | None:
+    content = normalizar_content(content)
     val = validar_mapeo(content, cfg, tipo_libro)
     if not val["ok"]:
         detalle = (

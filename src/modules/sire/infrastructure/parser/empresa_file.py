@@ -21,6 +21,7 @@ Formato conocido (prioridad alta):
 
 import re
 import io
+from datetime import date, datetime
 from dataclasses import dataclass, field
 from typing import Optional
 import pandas as pd
@@ -105,6 +106,56 @@ _KNOWN_FORMAT_REQUIRED = {"type description", "number", "issued date", "amount n
 KNOWN_FORMAT_COLUMNS_HELP = (
     "Type description, Number, Issued date, Amount net, Amount tax, Amount total"
 )
+
+
+_XLSX_SIG = b"PK\x03\x04"
+_XLS_SIG = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _es_excel(content: bytes) -> bool:
+    """Detecta Excel por firma binaria (un CSV/TXT nunca empieza así)."""
+    return content[:4] == _XLSX_SIG or content[:8] == _XLS_SIG
+
+
+def _fmt_celda(v) -> str:
+    """Celda de Excel → texto plano sin artefactos: enteros sin '.0' y fechas en
+    DD/MM/YYYY (que el pipeline de fechas ya normaliza a ISO)."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        if pd.isna(v):
+            return ""
+        return str(int(v)) if v.is_integer() else repr(v)
+    if isinstance(v, (datetime, date, pd.Timestamp)):
+        return pd.Timestamp(v).strftime("%d/%m/%Y")
+    return str(v).strip()
+
+
+def normalizar_content(content: bytes) -> bytes:
+    """
+    Si el archivo es Excel (.xlsx/.xlsm), lo convierte a texto delimitado (TSV) en
+    memoria para que TODO el pipeline de parseo lo trate como un CSV/TXT normal
+    (detección de delimitador, cabeceras, formato conocido, mapeo, etc. quedan
+    intactos). Idempotente: si no es Excel, devuelve el contenido sin cambios.
+    """
+    if not _es_excel(content):
+        return content
+    if content[:8] == _XLS_SIG:
+        raise ValueError(
+            "El formato .xls (Excel antiguo) no es compatible. "
+            "Abre el archivo en Excel y guárdalo como .xlsx."
+        )
+    try:
+        df = pd.read_excel(io.BytesIO(content), header=None, dtype=object, engine="openpyxl")
+    except Exception as exc:  # archivo corrupto o protegido
+        raise ValueError(f"No se pudo leer el Excel: {exc}")
+    # Tab como delimitador: casi nunca aparece en los datos (a diferencia de la
+    # coma en los montos), y ya es uno de los delimitadores que el parser detecta.
+    return df.map(_fmt_celda).to_csv(sep="\t", index=False, header=False).encode("utf-8")
 
 
 def _detect_encoding(raw: bytes) -> str:
@@ -745,6 +796,7 @@ def parse_empresa_file(
     Devuelve (registros, mapping_usado). Solo mapping.known_format=True habilita
     la conciliación.
     """
+    content = normalizar_content(content)  # Excel → texto; CSV/TXT sin cambios (idempotente)
     if tipo_libro == "compras":
         ple_records = _try_parse_as_ple_compras(content)
         if ple_records is not None:

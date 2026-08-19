@@ -14,7 +14,7 @@ que el proceso principal guarda en la BD.
 import io
 
 from src.modules.sire.infrastructure.parser.empresa_file import (
-    parse_empresa_file, KNOWN_FORMAT_COLUMNS_HELP, PLE81_FORMAT_HELP,
+    parse_empresa_file, normalizar_content, KNOWN_FORMAT_COLUMNS_HELP, PLE81_FORMAT_HELP,
 )
 from src.modules.sire.infrastructure.parser.mapeo import parse_con_columnas, validar_mapeo
 from src.modules.sire.infrastructure.parser.sunat_propuesta import parse_sunat_propuesta
@@ -33,6 +33,8 @@ def _parsear_empresa(contenido: bytes, empresa_filename: str, tipo_libro: str,
     (explícito, formato conocido o guardado). Réplica sin BD de la resolución
     que antes hacía el proceso principal.
     """
+    contenido = normalizar_content(contenido)  # Excel → texto; CSV/TXT sin cambios
+
     def _parse_con(config: dict) -> list:
         val = validar_mapeo(contenido, config, tipo_libro)
         if not val["ok"]:
