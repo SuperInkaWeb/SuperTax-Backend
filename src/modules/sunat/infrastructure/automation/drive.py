@@ -49,8 +49,8 @@ class DriveClient:
             token=access_token,
             refresh_token=refresh_token or None,
             token_uri="https://oauth2.googleapis.com/token",
-            client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
-            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+            client_id=settings.GOOGLE_CLIENT_ID,
+            client_secret=settings.GOOGLE_CLIENT_SECRET,
             scopes=SCOPES,
         )
         self._on_refresh = on_refresh
