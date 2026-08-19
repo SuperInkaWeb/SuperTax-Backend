@@ -144,18 +144,16 @@ def normalizar_content(content: bytes) -> bytes:
     """
     if not _es_excel(content):
         return content
-    if content[:8] == _XLS_SIG:
-        raise ValueError(
-            "El formato .xls (Excel antiguo) no es compatible. "
-            "Abre el archivo en Excel y guárdalo como .xlsx."
-        )
     try:
-        df = pd.read_excel(io.BytesIO(content), header=None, dtype=object, engine="openpyxl")
+        # calamine (motor en Rust) tolera los Excel de sistemas contables/SUNAT que
+        # openpyxl rechaza por XML no estándar; lee .xlsx, .xls y .xlsb.
+        df = pd.read_excel(io.BytesIO(content), header=None, dtype=object, engine="calamine")
     except Exception as exc:  # archivo corrupto o protegido
         raise ValueError(f"No se pudo leer el Excel: {exc}")
-    # Tab como delimitador: casi nunca aparece en los datos (a diferencia de la
-    # coma en los montos), y ya es uno de los delimitadores que el parser detecta.
-    return df.map(_fmt_celda).to_csv(sep="\t", index=False, header=False).encode("utf-8")
+    # '|' como delimitador: casi nunca aparece en los datos y `re.escape` lo maneja
+    # bien (el tab no: re.escape('\t') rompe el regex del parser). Es además el
+    # delimitador del PLE, que el pipeline ya procesa de forma probada.
+    return df.map(_fmt_celda).to_csv(sep="|", index=False, header=False).encode("utf-8")
 
 
 def _detect_encoding(raw: bytes) -> str:
