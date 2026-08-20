@@ -151,7 +151,7 @@ _ISO_FECHA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _detectar_fechas(content: bytes, delimiter: str, encoding: str,
-                     has_header: bool, idx_fecha: int) -> list[str]:
+                     has_header: bool, idx_fecha: int, skip_rows: int = 0) -> list[str]:
     """
     Devuelve las fechas AAAA-MM-DD distintas de la columna de fecha, leyendo
     SOLO esa columna y en bloques: la memoria queda acotada sin importar el
@@ -165,7 +165,7 @@ def _detectar_fechas(content: bytes, delimiter: str, encoding: str,
             sep=re.escape(delimiter),
             header=None,
             usecols=[idx_fecha],
-            skiprows=1 if has_header else 0,
+            skiprows=skip_rows + (1 if has_header else 0),
             dtype=str,
             skip_blank_lines=True,
             on_bad_lines="skip",
@@ -193,11 +193,74 @@ _PLE141_A_CAMPO = {
 }
 
 
+def _fila_parece_datos(fila: list[str]) -> float:
+    """Fracción de celdas no vacías que parecen un dato real (fecha, RUC, monto,
+    número o serie-número). Una fila de datos puntúa alto; una de título, bajo."""
+    vals = [c for c in fila if c and c not in ("nan", "None")]
+    if len(vals) < 3:
+        return 0.0
+    hits = sum(
+        1 for c in vals
+        if _FECHA_RE.match(c) or _RUC_RE.match(c) or _MONTO_RE.match(c) or _SERIE_NUM_RE.match(c)
+    )
+    return hits / len(vals)
+
+
+def _fila_parece_header(fila: list[str], tipo_libro: str) -> bool:
+    """La fila parece un encabezado: varias celdas coinciden con alias de campos."""
+    norm = [c.lower().strip() for c in fila if c.strip()]
+    if len(norm) < 3:
+        return False
+    aciertos = 0
+    for celda in norm:
+        for spec in campos_de(tipo_libro):
+            if any(alias in celda for alias in _ALIAS_HEADER.get(spec["campo"], [])):
+                aciertos += 1
+                break
+    return aciertos >= 3
+
+
+def _detectar_region(df: pd.DataFrame, tipo_libro: str) -> tuple[int, bool]:
+    """
+    Encuentra dónde empieza la tabla real dentro de un reporte con bloque de
+    título/basura arriba. Devuelve (skip_rows, has_header):
+      - skip_rows: filas a saltar antes de la tabla (el encabezado, si lo hay,
+        queda como primera fila tras el salto).
+      - has_header: si esa primera fila es un encabezado.
+    Para archivos ya limpios devuelve (0, ...) → no cambia el comportamiento.
+    """
+    n = len(df)
+    if n == 0:
+        return 0, False
+
+    def fila(i: int) -> list[str]:
+        return df.iloc[i].fillna("").astype(str).str.strip().tolist()
+
+    inicio = None
+    for i in range(min(n, 60)):
+        if _fila_parece_datos(fila(i)) >= 0.5:
+            # Cuenta filas de datos en una ventana amplia: tolera filas en blanco o
+            # etiquetas de sección intercaladas (reportes a doble espacio), en vez
+            # de exigir filas consecutivas.
+            fin = min(i + 8, n)
+            datos = sum(1 for j in range(i, fin) if _fila_parece_datos(fila(j)) >= 0.5)
+            if datos >= min(3, n - i):
+                inicio = i
+                break
+
+    if inicio is None:  # sin tabla clara → comportamiento actual (la fila 0 decide)
+        return 0, _detect_header(fila(0))
+    if inicio > 0 and _fila_parece_header(fila(inicio - 1), tipo_libro):
+        return inicio - 1, True
+    return inicio, False
+
+
 def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None = None) -> dict:
     """Inspecciona el archivo y devuelve columnas + mapeo propuesto + validación."""
     encoding = _detect_encoding(content)
     solo_lectura = False
     formato = None
+    skip_rows = 0
 
     if tipo_libro == "ventas" and _try_parse_as_ple_ventas(content) is not None:
         delimiter, has_header = "|", False
@@ -219,9 +282,20 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
         if not lines:
             return {"error": "El archivo está vacío"}
         delimiter = _detect_delimiter(lines)
-        first_fields = lines[0].split(delimiter)
-        has_header = _detect_header(first_fields)
-        headers_norm = [h.lower().strip() for h in first_fields] if has_header else []
+
+        # Detecta la región de datos: salta el bloque de título/basura y ubica
+        # el encabezado real. Para archivos limpios devuelve (0, ...).
+        df_region = _leer_df(content, delimiter, encoding, nrows=120)
+        if df_region is None or df_region.empty:
+            return {"error": "No se pudo leer el archivo con el delimitador detectado"}
+        skip_rows, has_header = _detectar_region(df_region, tipo_libro)
+
+        header_fields = (
+            df_region.iloc[skip_rows].fillna("").astype(str).str.strip().tolist()
+            if has_header and skip_rows < len(df_region)
+            else []
+        )
+        headers_norm = [h.lower().strip() for h in header_fields]
 
         mapeo: dict[str, int] = {}
         combinado = False
@@ -239,13 +313,16 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
             combinado = bool(saved_config.get("serie_numero_combinado"))
             delimiter = saved_config.get("delimiter", delimiter)
             has_header = bool(saved_config.get("has_header", has_header))
+            skip_rows = int(saved_config.get("skip_rows", skip_rows))
         else:
             nivel = "sugerido"
-            mapeo, combinado = _sugerir(content, delimiter, encoding, has_header, headers_norm, tipo_libro)
+            mapeo, combinado = _sugerir(
+                content, delimiter, encoding, has_header, headers_norm, tipo_libro, skip_rows
+            )
             if not mapeo:
                 nivel = "desconocido"
 
-    df = _leer_df(content, delimiter, encoding, nrows=60)
+    df = _leer_df(content, delimiter, encoding, skip_rows=skip_rows, nrows=60)
     if df is None or df.empty:
         return {"error": "No se pudo leer el archivo con el delimitador detectado"}
 
@@ -262,7 +339,7 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
         "delimiter": delimiter,
         "encoding": encoding,
         "has_header": has_header,
-        "skip_rows": 0,
+        "skip_rows": skip_rows,
         "serie_numero_combinado": combinado,
         "columnas": mapeo,
     }
@@ -282,7 +359,9 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
     fechas_detectadas: list[str] = []
     idx_fecha = mapeo.get("fecha_emision")
     if tipo_libro == "ventas" and idx_fecha is not None:
-        fechas_detectadas = _detectar_fechas(content, delimiter, encoding, has_header, idx_fecha)
+        fechas_detectadas = _detectar_fechas(
+            content, delimiter, encoding, has_header, idx_fecha, skip_rows
+        )
 
     return {
         "nivel": nivel,
@@ -297,7 +376,7 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
 
 
 def _sugerir(content: bytes, delimiter: str, encoding: str, has_header: bool,
-             headers_norm: list[str], tipo_libro: str) -> tuple[dict[str, int], bool]:
+             headers_norm: list[str], tipo_libro: str, skip_rows: int = 0) -> tuple[dict[str, int], bool]:
     """Heurística de PRE-llenado. Nunca decide sola: el usuario confirma."""
     mapeo: dict[str, int] = {}
     usadas: set[int] = set()
@@ -316,7 +395,7 @@ def _sugerir(content: bytes, delimiter: str, encoding: str, has_header: bool,
                     break
 
     combinado = False
-    df = _leer_df(content, delimiter, encoding, nrows=40)
+    df = _leer_df(content, delimiter, encoding, skip_rows=skip_rows, nrows=40)
     if df is not None and not df.empty:
         start = 1 if has_header else 0
         data = df.iloc[start:]

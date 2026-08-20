@@ -132,7 +132,12 @@ def _fmt_celda(v) -> str:
         return str(int(v)) if v.is_integer() else repr(v)
     if isinstance(v, (datetime, date, pd.Timestamp)):
         return pd.Timestamp(v).strftime("%d/%m/%Y")
-    return str(v).strip()
+    # Aplana la celda: (1) quita los escapes OOXML `_xHHHH_` que algunos lectores
+    # dejan como texto literal para los saltos de línea/control internos, y
+    # (2) colapsa saltos y espacios. Los reportes traen encabezados partidos en
+    # varias líneas dentro de una celda, que si no se aplanan rompen la detección.
+    s = re.sub(r"_x[0-9A-Fa-f]{4}_", " ", str(v))
+    return " ".join(s.split())
 
 
 def normalizar_content(content: bytes) -> bytes:
