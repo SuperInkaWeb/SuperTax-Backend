@@ -550,7 +550,11 @@ def parse_con_columnas(content: bytes, config: dict, tipo_libro: str,
     else:
         serie_s = txt("serie").str.upper()
 
-    valid = ~numero_s.fillna("").isin(["", "nan", "None"])
+    # Una fila es un comprobante solo si su número tiene dígitos. Descarta filas
+    # basura que se cuelan entre los datos: encabezados repetidos por página
+    # ("NÚMERO"), subtotales/totales ("TOTAL"), pies ("Page 1 of 1") y etiquetas
+    # de sección — además de las vacías. (Fase 2.)
+    valid = numero_s.fillna("").astype(str).str.contains(r"[0-9]", regex=True)
     keep = valid[valid].index
 
     tipo_s = txt("tipo_cdp")
