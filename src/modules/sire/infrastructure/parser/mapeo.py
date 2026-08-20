@@ -26,6 +26,9 @@ from src.modules.sire.infrastructure.parser.empresa_file import (
     _norm_date_series,
     _to_float_series,
     _normalize_tipo_cdp,
+    _TIPO_CDP_PATTERN,
+    _SERIE_PATTERN,
+    _NUMERO_PATTERN,
     _KNOWN_FORMAT_REQUIRED,
     _PLE81_IDX,
     _PLE141_IDX,
@@ -375,6 +378,43 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
     }
 
 
+def _detectar_montos(data: pd.DataFrame, disponibles: list[int]) -> dict[str, int]:
+    """Detecta base imponible / IGV / importe total entre las columnas numéricas
+    libres, por aritmética (total = base + IGV; base es la mayor, IGV la menor).
+    Devuelve lo que logre identificar (al menos el total). Es una sugerencia."""
+    montos: dict[int, pd.Series] = {}
+    for i in disponibles:
+        serie = _to_float_series(data.iloc[:, i])
+        no_cero = serie[serie != 0]
+        if len(no_cero) == 0:
+            continue
+        # Un monto real: positivo, con céntimos en parte de los valores y magnitud
+        # razonable. Los IDs (RUC, correlativo, número) son enteros y/o enormes.
+        con_decimal = float(((no_cero - no_cero.round()).abs() > 1e-9).mean())
+        if (float((serie > 0).mean()) >= 0.3 and con_decimal >= 0.15
+                and float(no_cero.abs().max()) < 1e9):
+            montos[i] = serie
+    if not montos:
+        return {}
+    total_i = max(montos, key=lambda i: float(montos[i].mean()))
+    resto = [i for i in montos if i != total_i]
+    mejor: tuple[int, int] | None = None
+    mejor_hits = 0.0
+    for b in resto:
+        for g in resto:
+            if g == b:
+                continue
+            hits = float((((montos[b] + montos[g]) - montos[total_i]).abs() <= 0.5).mean())
+            if hits > mejor_hits:
+                mejor_hits, mejor = hits, (b, g)
+    if mejor and mejor_hits >= 0.6:
+        b, g = mejor
+        if float(montos[b].mean()) < float(montos[g].mean()):
+            b, g = g, b
+        return {"base_imponible": b, "igv": g, "importe_total": total_i}
+    return {"importe_total": total_i}
+
+
 def _sugerir(content: bytes, delimiter: str, encoding: str, has_header: bool,
              headers_norm: list[str], tipo_libro: str, skip_rows: int = 0) -> tuple[dict[str, int], bool]:
     """Heurística de PRE-llenado. Nunca decide sola: el usuario confirma."""
@@ -396,27 +436,61 @@ def _sugerir(content: bytes, delimiter: str, encoding: str, has_header: bool,
 
     combinado = False
     df = _leer_df(content, delimiter, encoding, skip_rows=skip_rows, nrows=40)
-    if df is not None and not df.empty:
-        start = 1 if has_header else 0
-        data = df.iloc[start:]
+    if df is None or df.empty:
+        return mapeo, combinado
+
+    start = 1 if has_header else 0
+    data = df.iloc[start:]
+
+    def _tasa(vals: list[str], patron) -> float:
+        return sum(1 for v in vals if patron.match(v)) / len(vals) if vals else 0.0
+
+    # Campos por patrón, una asignación por columna.
+    for i in range(len(df.columns)):
+        if i in usadas:
+            continue
+        vals = [v for v in data.iloc[:, i].fillna("").astype(str).str.strip() if v]
+        if not vals:
+            continue
+        if "fecha_emision" not in mapeo and _tasa(vals, _FECHA_RE) > 0.9:
+            mapeo["fecha_emision"] = i
+        elif tipo_libro == "compras" and "ruc_proveedor" not in mapeo and _tasa(vals, _RUC_RE) > 0.9:
+            mapeo["ruc_proveedor"] = i
+        elif "numero" not in mapeo and _tasa(vals, _SERIE_NUM_RE) > 0.9:
+            mapeo["numero"] = i
+            combinado = True
+            mapeo.pop("serie", None)
+        elif "tipo_cdp" not in mapeo and _tasa(vals, _TIPO_CDP_PATTERN) > 0.9 and len(set(vals)) <= 12:
+            mapeo["tipo_cdp"] = i
+        elif "serie" not in mapeo and not combinado and _tasa(vals, _SERIE_PATTERN) > 0.9:
+            mapeo["serie"] = i
+        else:
+            continue
+        usadas.add(i)
+
+    # Número plano (entero) si no vino combinado. Se prefiere la columna junto/
+    # después de la serie: así se toma el número del comprobante y no el
+    # correlativo del registro (un entero único que va al inicio de la fila).
+    if "numero" not in mapeo:
+        candidatos = []
         for i in range(len(df.columns)):
             if i in usadas:
                 continue
             vals = [v for v in data.iloc[:, i].fillna("").astype(str).str.strip() if v]
-            if not vals:
-                continue
-            rate = lambda rx: sum(1 for v in vals if rx.match(v)) / len(vals)
-            if "fecha_emision" not in mapeo and rate(_FECHA_RE) > 0.9:
-                mapeo["fecha_emision"] = i
-                usadas.add(i)
-            elif tipo_libro == "compras" and "ruc_proveedor" not in mapeo and rate(_RUC_RE) > 0.9:
-                mapeo["ruc_proveedor"] = i
-                usadas.add(i)
-            elif "numero" not in mapeo and rate(_SERIE_NUM_RE) > 0.9:
-                mapeo["numero"] = i
-                usadas.add(i)
-                combinado = True
-                mapeo.pop("serie", None)
+            if vals and _tasa(vals, _NUMERO_PATTERN) > 0.9 and len(set(vals)) / len(vals) > 0.5:
+                candidatos.append(i)
+        if candidatos:
+            serie_i = mapeo.get("serie")
+            if serie_i is not None:
+                candidatos.sort(key=lambda i: (i <= serie_i, abs(i - serie_i)))
+            mapeo["numero"] = candidatos[0]
+            usadas.add(candidatos[0])
+
+    # Montos (base / IGV / total) por aritmética entre las columnas numéricas libres.
+    libres = [i for i in range(len(df.columns)) if i not in usadas]
+    for campo, idx in _detectar_montos(data, libres).items():
+        mapeo.setdefault(campo, idx)
+        usadas.add(idx)
 
     return mapeo, combinado
 
