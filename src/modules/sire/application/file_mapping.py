@@ -38,7 +38,8 @@ def _saved_response(m: CompanyFileMappingModel | None) -> dict | None:
 
 
 def analizar(
-    repo: SqlFileMappingRepository, company_id: int, tipo_libro: str, content: bytes
+    repo: SqlFileMappingRepository, company_id: int, tipo_libro: str, content: bytes,
+    skip_rows: int | None = None,
 ) -> dict:
     content = normalizar_content(content)  # Excel → texto; CSV/TXT pasa sin cambios
     saved = repo.get(company_id, tipo_libro)
@@ -47,7 +48,7 @@ def analizar(
         if (saved and saved.columnas and saved.confirmed_by_user)
         else None
     )
-    resultado = analizar_archivo(content, tipo_libro, saved_config)
+    resultado = analizar_archivo(content, tipo_libro, saved_config, skip_rows)
     if "error" in resultado:
         raise ValueError(resultado["error"])
     resultado["tiene_guardado"] = saved_config is not None

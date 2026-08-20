@@ -282,17 +282,20 @@ def upsert_credentials(
 async def analizar_formato(
     tipo_libro: str = Form(...),
     archivo: UploadFile = File(...),
+    skip_rows: int | None = Form(None),
     ctx: ActiveContext = Depends(require_permission("sire.job.read")),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Analiza un archivo: columnas + mapeo propuesto + validación."""
+    """Analiza un archivo: columnas + mapeo propuesto + validación.
+
+    `skip_rows` (opcional): corrección manual de dónde empiezan los datos."""
     _validar_libro(tipo_libro)
     content = await archivo.read()
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío")
     try:
         return file_mapping.analizar(
-            SqlFileMappingRepository(db), ctx.company.id, tipo_libro, content
+            SqlFileMappingRepository(db), ctx.company.id, tipo_libro, content, skip_rows
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))

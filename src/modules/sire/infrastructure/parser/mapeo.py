@@ -258,8 +258,12 @@ def _detectar_region(df: pd.DataFrame, tipo_libro: str) -> tuple[int, bool]:
     return inicio, False
 
 
-def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None = None) -> dict:
-    """Inspecciona el archivo y devuelve columnas + mapeo propuesto + validación."""
+def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None = None,
+                     skip_rows_manual: int | None = None) -> dict:
+    """Inspecciona el archivo y devuelve columnas + mapeo propuesto + validación.
+
+    `skip_rows_manual`: si el usuario corrige dónde empiezan los datos, se usa ese
+    valor en vez de la auto-detección (red de seguridad para reportes raros)."""
     encoding = _detect_encoding(content)
     solo_lectura = False
     formato = None
@@ -291,7 +295,13 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
         df_region = _leer_df(content, delimiter, encoding, nrows=120)
         if df_region is None or df_region.empty:
             return {"error": "No se pudo leer el archivo con el delimitador detectado"}
-        skip_rows, has_header = _detectar_region(df_region, tipo_libro)
+        if skip_rows_manual is not None:
+            skip_rows = max(0, min(int(skip_rows_manual), len(df_region) - 1))
+            has_header = _fila_parece_header(
+                df_region.iloc[skip_rows].fillna("").astype(str).str.strip().tolist(), tipo_libro
+            )
+        else:
+            skip_rows, has_header = _detectar_region(df_region, tipo_libro)
 
         header_fields = (
             df_region.iloc[skip_rows].fillna("").astype(str).str.strip().tolist()
@@ -316,7 +326,8 @@ def analizar_archivo(content: bytes, tipo_libro: str, saved_config: dict | None 
             combinado = bool(saved_config.get("serie_numero_combinado"))
             delimiter = saved_config.get("delimiter", delimiter)
             has_header = bool(saved_config.get("has_header", has_header))
-            skip_rows = int(saved_config.get("skip_rows", skip_rows))
+            if skip_rows_manual is None:  # el override del usuario gana sobre el guardado
+                skip_rows = int(saved_config.get("skip_rows", skip_rows))
         else:
             nivel = "sugerido"
             mapeo, combinado = _sugerir(
