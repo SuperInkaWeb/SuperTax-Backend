@@ -6,6 +6,7 @@ y se filtran por empresa activa. El streaming de logs (`/logs`) es SSE: el
 navegador (EventSource) no puede enviar cabeceras, así que valida el token Auth0
 por query param y comprueba la propiedad del job manualmente.
 """
+import io
 import json
 import time
 
@@ -35,6 +36,7 @@ from src.modules.sunat.application.credentials import (
     set_credentials,
 )
 from src.modules.sunat.infrastructure.models import SunatJobStatus
+from src.modules.sunat.infrastructure.report_excel import generar_reporte
 from src.modules.sunat.infrastructure.repositories import (
     SqlDriveTokenRepository,
     SqlJobResultRepository,
@@ -95,6 +97,24 @@ def get_job(
         job_id=fila.job_id,
         created_at=fila.created_at,
         resultados=json.loads(fila.resultados),
+    )
+
+
+@router.get("/jobs/{job_id}/report", dependencies=_MODULO)
+def descargar_reporte(
+    job_id: str,
+    ctx: ActiveContext = Depends(require_permission("sunat.job.read")),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Descarga el reporte Excel del job: estado por comprobante + descripción."""
+    fila = SqlJobResultRepository(db).get_by_job_id(job_id, ctx.company.id)
+    if fila is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Resultado no encontrado")
+    xlsx = generar_reporte(json.loads(fila.resultados))
+    return StreamingResponse(
+        io.BytesIO(xlsx),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="reporte-sunat-{job_id}.xlsx"'},
     )
 
 

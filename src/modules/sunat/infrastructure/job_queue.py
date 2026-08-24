@@ -15,6 +15,7 @@ import uuid
 
 from sqlalchemy import select
 
+from src.modules.sunat.infrastructure.comprobante_xml import enriquecer_resultados
 from src.modules.sunat.infrastructure.jobs import (
     DESCARGAS_DIR,
     _guardar_resultado_job,
@@ -147,8 +148,11 @@ def procesar_job(storage: FileStorage, job_id: str) -> None:
     try:
         from src.modules.sunat.infrastructure.automation import automatizar
 
-        resultados = automatizar(full_config, _Sink(writer, "log"), _Sink(writer, "progress"))
-        _guardar_resultado_job(job_id, company_id, user_id, resultados or [])
+        resultados = automatizar(full_config, _Sink(writer, "log"), _Sink(writer, "progress")) or []
+        # Enriquece con la descripción de cada comprobante (parseando sus XML)
+        # mientras los temporales aún existen, antes de la limpieza del finally.
+        resultados = enriquecer_resultados(resultados, job_dir)
+        _guardar_resultado_job(job_id, company_id, user_id, resultados)
         if cancelar.is_set():
             estado = SunatJobStatus.cancelado
         elif not resultados:
