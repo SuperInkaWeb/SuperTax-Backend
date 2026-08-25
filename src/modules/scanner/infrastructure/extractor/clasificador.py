@@ -15,6 +15,7 @@ TIPO_RECIBO_AGUA         = "recibo_agua"
 TIPO_RECIBO_GAS          = "recibo_gas"
 TIPO_RECIBO_TELEFONIA    = "recibo_telefonia"
 TIPO_ASISTENCIA          = "asistencia"
+TIPO_BOLETA_PAGO         = "boleta_pago"
 TIPO_DESCONOCIDO         = "desconocido"
 
 # Etiquetas amigables para el frontend
@@ -29,6 +30,7 @@ ETIQUETAS = {
     TIPO_RECIBO_GAS:          "Recibo de Gas",
     TIPO_RECIBO_TELEFONIA:    "Recibo de Telefonía / Internet",
     TIPO_ASISTENCIA:          "Planilla de Asistencia",
+    TIPO_BOLETA_PAGO:         "Boleta de Pago",
     TIPO_DESCONOCIDO:         "Documento desconocido",
 }
 
@@ -37,6 +39,17 @@ ETIQUETAS = {
 # Mayor peso = señal más fuerte y específica.
 # Un tipo puede tener varias reglas; los scores se suman.
 _REGLAS: list[tuple[str, list[str], int]] = [
+
+    # ── Boleta de pago / nómina ──────────────────────────────────────────────
+    (TIPO_BOLETA_PAGO, [
+        r"BOLETA\s+DE\s+PAGO",
+        r"APORTACI[OÓ]N\s+DEL\s+EMPLEADOR",
+        r"DESCUENTO\s+DEL\s+TRABAJADOR",
+        r"TOTAL\s+APORTE",
+        r"REMUNERACI[OÓ]N\s+MENSUAL",
+        r"\bESSALUD\b",
+        r"\bAFP\b|\bO\.?N\.?P\.?\b",
+    ], 12),
 
     # ── Comprobantes SUNAT ──────────────────────────────────────────────────
     (TIPO_FACTURA_ELECTRONICA, [
@@ -85,7 +98,7 @@ _REGLAS: list[tuple[str, list[str], int]] = [
     # ── Recibo de agua ───────────────────────────────────────────────────────
     (TIPO_RECIBO_AGUA, [
         r"SEDAPAL|SEDACHIMBOTE|SEDA\s+CUSCO|SEDALIB|SEDAPAR|SEDACUSCO|"
-        r"EMFAPATUMBES|AGUAS\s+DE\s+(?:LIMA|AREQUIPA|TUMBES)|EPS\s+\w+",
+        r"EMFAPATUMBES|AGUAS\s+DE\s+(?:LIMA|AREQUIPA|TUMBES)",
         r"AGUA\s+POTABLE",
         r"CONSUMO\s+DE\s+AGUA",
         r"ALCANTARILLADO",

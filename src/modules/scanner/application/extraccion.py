@@ -57,6 +57,7 @@ def _limpiar(path: str | None) -> None:
 def _extractores():
     """Mapa tipo→extractor (import perezoso del motor de extracción)."""
     from src.modules.scanner.infrastructure.extractor.asistencia import extract_asistencia
+    from src.modules.scanner.infrastructure.extractor.boleta_pago import extract_boleta_pago
     from src.modules.scanner.infrastructure.extractor.comprobante import extract_comprobante
     from src.modules.scanner.infrastructure.extractor.recibo_agua import extract_recibo_agua
     from src.modules.scanner.infrastructure.extractor.recibo_gas import extract_recibo_gas
@@ -76,6 +77,7 @@ def _extractores():
         "recibo_gas": extract_recibo_gas,
         "recibo_telefonia": extract_recibo_telefonia,
         "asistencia": extract_asistencia,
+        "boleta_pago": extract_boleta_pago,
     }
 
 

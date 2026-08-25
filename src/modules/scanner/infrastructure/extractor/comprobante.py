@@ -61,6 +61,7 @@ def _parsear_factura(texto: str) -> dict:
         "serie":              serie,
         "numero_doc":         numero,
         "moneda":             _extraer_moneda(texto),
+        "descripcion":        _descripcion(texto),
         "subtotal":           extraer_monto(texto, ["OP. AFECTA", "OP. GRAVADA", "OP. INAFECTA",
                                                      "OP. EXONERADA", "SUBTOTAL", "Sub Total"]),
         "descuentos":         extraer_monto(texto, ["DESCUENTO", "DSCTO", "REBAJA"]),
@@ -84,6 +85,7 @@ def _parsear_boleta(texto: str) -> dict:
         "serie":             serie,
         "numero_doc":        numero,
         "moneda":            _extraer_moneda(texto),
+        "descripcion":       _descripcion(texto),
         "subtotal":          extraer_monto(texto, ["OP. AFECTA", "OP. GRAVADA", "SUBTOTAL", "Sub Total"]),
         "igv":               extraer_monto(texto, ["IGV", "I.G.V", "I.G.V.", "IGV 18%"]),
         "total":             extraer_monto(texto, ["TOTAL", "IMPORTE TOTAL", "Total"]),
@@ -113,7 +115,7 @@ def _parsear_honorarios(texto: str) -> dict:
         "serie":                serie,
         "numero_doc":           numero,
         "moneda":               _extraer_moneda(texto),
-        "descripcion_servicio": _descripcion_servicio(texto),
+        "descripcion_servicio": _descripcion(texto),
         "monto_honorarios":     honorarios,
         "retencion_pct":        4.0,
         "retencion_monto":      retencion,
@@ -134,6 +136,7 @@ def _parsear_nota(texto: str) -> dict:
         "serie":               serie,
         "numero_doc":          numero,
         "moneda":              _extraer_moneda(texto),
+        "descripcion":         _descripcion(texto),
         "doc_ref_tipo":        _doc_referencia_tipo(texto),
         "doc_ref_serie":       _doc_referencia_serie(texto),
         "doc_ref_numero":      _doc_referencia_numero(texto),
@@ -280,9 +283,11 @@ def _periodo_servicio(texto: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def _descripcion_servicio(texto: str) -> str | None:
+def _descripcion(texto: str) -> str | None:
+    """Detalle/concepto del comprobante (best-effort: en facturas es la tabla de
+    ítems, así que captura la primera línea de descripción)."""
     m = re.search(
-        r"(?:Descripci[oó]n|Concepto|Servicio)\s*[:\-]?\s*([^\n]{5,120})",
+        r"(?:Descripci[oó]n|Concepto|Detalle|Servicio|Producto)\s*[:\-]?\s*([^\n]{5,120})",
         texto, re.IGNORECASE
     )
     return m.group(1).strip() if m else None
