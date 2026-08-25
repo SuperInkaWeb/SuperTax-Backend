@@ -1,33 +1,23 @@
 """
 ia_fallback.py
 --------------
-Ruta 2 de extracción: cuando el OCR tradicional (Tesseract + EasyOCR)
-no puede leer el documento, se envía la imagen a Groq Vision (LLaMA 4)
-para que intente reconstruir el contenido.
+Ruta de extracción por IA de visión (Groq): cuando el OCR tradicional
+(Tesseract) no puede leer el documento, se envía la imagen al modelo de visión
+para reconstruir el contenido.
 
-IMPORTANTE: Los datos extraídos por esta ruta pueden contener errores
-debido al mal estado del documento original. Siempre se marca con
-procesado_con_ia=True para que el frontend muestre la advertencia.
+`vision_json` es el primitivo reutilizable (imagen + prompt → JSON). Lo usan
+tanto el fallback general (`ia_leer_documento`) como la lectura de planillas de
+asistencia escaneadas (`asistencia._desde_imagen`).
+
+IMPORTANTE: los datos por esta ruta pueden contener errores por el estado del
+documento; el fallback general marca `procesado_con_ia=True` para que el frontend
+muestre la advertencia.
 """
 
-import os
-import json
 import base64
+import json
+import os
 import re
-
-
-def _inferir_tipo(texto: str) -> str:
-    """Intenta inferir el tipo de documento desde texto libre si el JSON falló."""
-    t = texto.lower()
-    if any(x in t for x in ["factura", "invoice"]): return "factura_electronica"
-    if any(x in t for x in ["boleta"]): return "boleta_venta"
-    if any(x in t for x in ["honorarios"]): return "recibo_honorarios"
-    if any(x in t for x in ["kwh", "suministro", "luz", "energia"]): return "recibo_luz"
-    if any(x in t for x in ["m3", "agua", "sedapal"]): return "recibo_agua"
-    if any(x in t for x in ["gas", "calidda", "contugas"]): return "recibo_gas"
-    if any(x in t for x in ["telefon", "movistar", "claro", "entel"]): return "recibo_telefonia"
-    if any(x in t for x in ["asistencia", "planilla", "entrada", "salida"]): return "asistencia"
-    return "desconocido"
 
 
 def _imagen_a_base64(imagen_path: str) -> str:
@@ -35,26 +25,64 @@ def _imagen_a_base64(imagen_path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def ia_leer_documento(imagen_path: str) -> dict:
-    """
-    Envía la imagen a Groq Vision y solicita extracción estructurada.
-
-    Retorna un dict con:
-      - tipo_documento: tipo detectado
-      - campos: dict con los campos extraídos
-      - procesado_con_ia: True (siempre)
-      - advertencia: mensaje para el usuario
-    """
+def _groq_client():
     from groq import Groq
 
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY no está configurada en .env")
+    return Groq(api_key=api_key)
 
-    client = Groq(api_key=api_key)
 
+def vision_json(imagen_path: str, prompt: str, max_tokens: int = 2048) -> dict:
+    """Envía la imagen + prompt a Groq Vision y devuelve el JSON parseado.
+
+    Rescata el bloque `{...}` si el modelo agrega texto extra. Lanza
+    `json.JSONDecodeError` si no hay JSON, o `ValueError` si falta la API key.
+    """
+    client = _groq_client()
     imagen_b64 = _imagen_a_base64(imagen_path)
 
+    response = client.chat.completions.create(
+        model=os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"),
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{imagen_b64}"},
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+        reasoning_effort="none",
+        response_format={"type": "json_object"},
+        max_completion_tokens=max_tokens,
+    )
+
+    texto = (response.choices[0].message.content or "").strip()
+    # Salvaguarda: quitar razonamiento <think> y cercos ```json ... ```.
+    texto = re.sub(r"<think>.*?</think>", "", texto, flags=re.DOTALL).strip()
+    texto = re.sub(r"^```(?:json)?\s*", "", texto)
+    texto = re.sub(r"\s*```$", "", texto)
+
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", texto, re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def ia_leer_documento(imagen_path: str) -> dict:
+    """
+    Fallback general: envía la imagen a Groq Vision y solicita clasificación +
+    extracción de campos. Devuelve tipo_documento, campos, procesado_con_ia y una
+    advertencia para el frontend.
+    """
     prompt = """Eres un asistente especializado en documentos peruanos.
 Analiza esta imagen de un documento y extrae toda la información que puedas leer.
 
@@ -85,59 +113,10 @@ Si el documento está muy deteriorado y no puedes leer algo, omite ese campo.
 No inventes datos. Solo incluye lo que puedes leer en la imagen.
 Responde solo el JSON, sin texto adicional."""
 
-    response = client.chat.completions.create(
-        model=os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"),
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{imagen_b64}"
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ]
-            }
-        ],
-        reasoning_effort="none",
-        response_format={"type": "json_object"},
-        max_completion_tokens=2048,
-    )
-
-    texto = (response.choices[0].message.content or "").strip()
-
-    # Salvaguarda: si algún modelo aún devolviera razonamiento, se quita el <think>.
-    texto = re.sub(r"<think>.*?</think>", "", texto, flags=re.DOTALL).strip()
-    # Limpiar posibles ```json ... ``` que el modelo a veces agrega
-    texto = re.sub(r"^```(?:json)?\s*", "", texto)
-    texto = re.sub(r"\s*```$", "", texto)
-
     try:
-        resultado = json.loads(texto)
+        resultado = vision_json(imagen_path, prompt, max_tokens=2048)
     except json.JSONDecodeError:
-        # Intentar extraer el bloque JSON del texto
-        match = re.search(r"\{.*\}", texto, re.DOTALL)
-        if match:
-            try:
-                resultado = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                # Último intento: construir resultado básico desde el texto libre
-                resultado = {
-                    "tipo_documento": _inferir_tipo(texto),
-                    "confianza_lectura": "baja",
-                    "campos": {"texto_extraido": texto[:1000]}
-                }
-        else:
-            resultado = {
-                "tipo_documento": _inferir_tipo(texto),
-                "confianza_lectura": "baja",
-                "campos": {"texto_extraido": texto[:1000]}
-            }
+        resultado = {"tipo_documento": "desconocido", "confianza_lectura": "baja", "campos": {}}
 
     return {
         "tipo_documento":    resultado.get("tipo_documento", "desconocido"),
@@ -149,5 +128,5 @@ Responde solo el JSON, sin texto adicional."""
             "porque estaba en mal estado o era ilegible. "
             "Los datos extraídos pueden contener errores. "
             "Verifica la información manualmente antes de usarla."
-        )
+        ),
     }

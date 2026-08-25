@@ -5,16 +5,6 @@ from PIL import Image
 
 from src.modules.scanner.infrastructure.utils.text import TESSERACT_CMD
 
-_easyocr_reader = None
-
-
-def _get_easyocr_reader():
-    global _easyocr_reader
-    if _easyocr_reader is None:
-        import easyocr
-        _easyocr_reader = easyocr.Reader(["es", "en"], gpu=False)
-    return _easyocr_reader
-
 
 def imagen_a_texto(file_path: str) -> str:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
@@ -47,11 +37,8 @@ def imagen_a_texto(file_path: str) -> str:
         config="--psm 6 --oem 3"
     )
 
-    if len(texto.strip()) < 30:
-        reader = _get_easyocr_reader()
-        resultado = reader.readtext(file_path, detail=0)
-        texto = " ".join(resultado)
-
+    # Si Tesseract lee muy poco, el documento es ilegible y cae en el fallback de
+    # IA (Groq) aguas arriba, que lee mejor que un segundo motor OCR local.
     return texto
 
 
