@@ -21,7 +21,6 @@ from .descarga import _procesar_comprobante
 
 __all__ = [
     "automatizar",
-    "previsualizar_excel",
     "ConfigJob",
     "RefreshNecesario",
     "DriveTokenExpirado",
@@ -50,31 +49,6 @@ class ConfigJob(TypedDict, total=False):
     descargar_xml: bool
     comprobantes_seleccionados: List
     solo_faltantes: List
-
-
-def previsualizar_excel(ruta):
-    """Lee el Excel y devuelve lista de comprobantes para la UI de seleccion."""
-    df = pd.read_excel(ruta)
-    faltantes = [c for c in COLUMNAS_REQUERIDAS if c not in df.columns]
-    if faltantes:
-        raise ValueError(f"Columnas faltantes: {faltantes}")
-    df = df[COLUMNAS_REQUERIDAS].dropna(subset=["Serie del CDP"])
-    df["Nro Doc Identidad"] = df["Nro Doc Identidad"].astype(str).str.strip()
-    comprobantes = []
-    for _, fila in df.iterrows():
-        ruc_e  = str(fila["Nro Doc Identidad"]).strip()
-        serie  = str(fila["Serie del CDP"]).strip()
-        numero = int(fila["Nro CP o Doc. Nro Inicial (Rango)"])
-        tipo_n = int(fila["Tipo CP/Doc."]) if not pd.isna(fila["Tipo CP/Doc."]) else 1
-        tipo_t = TIPO_CP_MAP.get(tipo_n, f"Tipo {tipo_n}")
-        comprobantes.append({
-            "id":     f"{serie}-{numero}",
-            "ruc":    ruc_e,
-            "tipo":   tipo_t,
-            "serie":  serie,
-            "numero": numero,
-        })
-    return comprobantes
 
 
 def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:

@@ -11,7 +11,7 @@ import re
 from sqlalchemy.orm import Session
 
 from src.modules.sunat.application import credentials as sunat_creds
-from src.modules.sunat.infrastructure import job_queue
+from src.modules.sunat.infrastructure import input_parser, job_queue
 from src.modules.sunat.infrastructure import jobs as runner
 from src.modules.sunat.infrastructure.repositories import (
     SqlDriveTokenRepository,
@@ -29,6 +29,51 @@ class SunatJobError(Exception):
 
 def _es_email_valido(email: str) -> bool:
     return bool(_EMAIL_RE.match(email or ""))
+
+
+def _safe_unlink(ruta: str) -> None:
+    try:
+        os.unlink(ruta)
+    except OSError:
+        pass
+
+
+def _comp_dict(c: input_parser.ComprobanteEntrada) -> dict:
+    """Comprobante en el shape que consume la UI de selección."""
+    return {"id": c.id, "ruc": c.ruc, "tipo": c.tipo_texto, "serie": c.serie, "numero": c.numero}
+
+
+def _mapeo_dict(m: input_parser.MapeoEntrada) -> dict:
+    """Mapeo detectado en el shape que consume la UI de columnas."""
+    return {
+        "col_ruc": m.col_ruc,
+        "col_tipo": m.col_tipo,
+        "col_serie": m.col_serie,
+        "col_numero": m.col_numero,
+    }
+
+
+def _normalizar_a_canonico(ruta: str, mapeo_manual: dict | None = None) -> str:
+    """Lee la entrada (cualquier formato), la mapea y escribe el xlsx canónico que
+    consume `automatizar`. Consume `ruta` (la elimina). Lanza SunatJobError si no
+    se pueden identificar las columnas o no hay comprobantes válidos."""
+    with open(ruta, "rb") as f:
+        content = f.read()
+    mapeo = input_parser.analizar(content, mapeo_manual)["mapeo"]
+    if not mapeo.is_usable:
+        _safe_unlink(ruta)
+        raise SunatJobError(
+            "; ".join(mapeo.warnings) or "No se pudieron identificar las columnas del archivo"
+        )
+    try:
+        comprobantes = input_parser.extraer_comprobantes(content, mapeo)
+    except ValueError as exc:
+        _safe_unlink(ruta)
+        raise SunatJobError(str(exc))
+    _safe_unlink(ruta)
+    if not comprobantes:
+        raise SunatJobError("No se encontraron comprobantes válidos en el archivo")
+    return runner.escribir_tmp(input_parser.a_excel_canonico(comprobantes))
 
 
 def _resolver_login(
@@ -53,13 +98,16 @@ def _drive_tokens(db: Session, company_id: int) -> tuple[str, str]:
 
 
 async def _resolver_excel(preview_id, excel, excel_link, drive_access, drive_refresh) -> str:
+    # El preview_id ya apunta a un xlsx canónico (lo produjo previsualizar()).
     excel_path = runner.consumir_preview(preview_id) if preview_id else None
     if excel_path:
         return excel_path
+    # Sin preview: se subió el archivo directo → normalizar a canónico (auto-detección).
     try:
-        return await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
+        ruta = await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
     except ValueError as exc:
         raise SunatJobError(str(exc))
+    return _normalizar_a_canonico(ruta)
 
 
 async def iniciar(
@@ -131,9 +179,10 @@ async def forzar_faltantes(
 
     drive_access, drive_refresh = _drive_tokens(db, company_id)
     try:
-        excel_path = await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
+        ruta = await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
     except ValueError as exc:
         raise SunatJobError(str(exc))
+    excel_path = _normalizar_a_canonico(ruta)
 
     config = {
         "ruc": ruc,
@@ -153,22 +202,55 @@ async def forzar_faltantes(
     return job_queue.encolar_job(db, storage, company_id, user_id, config, excel_path)
 
 
-async def previsualizar(db: Session, company_id: int, *, excel, excel_link) -> dict:
+async def previsualizar(
+    db: Session, company_id: int, *, excel, excel_link, mapeo_manual: dict | None = None
+) -> dict:
+    """Analiza la entrada (cualquier formato), propone el mapeo de columnas y, si es
+    usable, devuelve los comprobantes + un preview_id que apunta al xlsx canónico.
+
+    Si el mapeo no es confiable, devuelve cabeceras + muestra + mapeo detectado para
+    que la UI lo corrija (y vuelva a llamar con `mapeo_manual`). Contrato tipo SIRE.
+    """
     drive_access, drive_refresh = _drive_tokens(db, company_id)
     try:
         ruta = await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
     except ValueError as exc:
         raise SunatJobError(str(exc))
 
-    from src.modules.sunat.infrastructure.automation import previsualizar_excel
+    try:
+        with open(ruta, "rb") as f:
+            content = f.read()
+        analisis = input_parser.analizar(content, mapeo_manual)
+    except Exception as exc:
+        _safe_unlink(ruta)
+        raise SunatJobError(f"No se pudo leer el archivo: {exc}")
+
+    mapeo = analisis["mapeo"]
+    respuesta = {
+        "mapeo": _mapeo_dict(mapeo),
+        "headers": analisis["headers"],
+        "muestra": analisis["muestra"],
+        "confianza": analisis["confianza"],
+        "necesita_revision": analisis["necesita_revision"],
+        "comprobantes": [],
+        "preview_id": "",
+    }
+    if not mapeo.is_usable:
+        _safe_unlink(ruta)
+        return respuesta
 
     try:
-        comprobantes = previsualizar_excel(ruta)
-    except Exception as exc:
-        try:
-            os.unlink(ruta)
-        except OSError:
-            pass
+        comprobantes = input_parser.extraer_comprobantes(content, mapeo)
+    except ValueError as exc:
+        _safe_unlink(ruta)
         raise SunatJobError(str(exc))
-    preview_id = runner.guardar_preview(ruta)  # se conserva; /iniciar lo consume
-    return {"comprobantes": comprobantes, "preview_id": preview_id}
+    _safe_unlink(ruta)  # el crudo ya no se necesita; el job usará el canónico
+
+    if not comprobantes:
+        respuesta["necesita_revision"] = True
+        return respuesta
+
+    canonico = runner.escribir_tmp(input_parser.a_excel_canonico(comprobantes))
+    respuesta["comprobantes"] = [_comp_dict(c) for c in comprobantes]
+    respuesta["preview_id"] = runner.guardar_preview(canonico)
+    return respuesta

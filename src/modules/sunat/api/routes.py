@@ -210,13 +210,20 @@ def drive_desconectar(
 @router.post("/preview-excel", dependencies=_MODULO)
 async def preview_excel(
     excel_link: str = Form(""),
+    mapeo: str = Form(""),
     excel: UploadFile | None = File(None),
     ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
     db: Session = Depends(get_db),
 ) -> dict:
+    mapeo_manual = None
+    if mapeo.strip():
+        try:
+            mapeo_manual = json.loads(mapeo)
+        except (ValueError, TypeError):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="mapeo no es JSON válido")
     try:
         return await job_service.previsualizar(
-            db, ctx.company.id, excel=excel, excel_link=excel_link
+            db, ctx.company.id, excel=excel, excel_link=excel_link, mapeo_manual=mapeo_manual
         )
     except job_service.SunatJobError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))

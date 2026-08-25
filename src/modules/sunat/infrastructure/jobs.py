@@ -35,6 +35,14 @@ _preview_files: dict = {}  # preview_id → (ruta, monotonic_ts)
 _PREVIEW_TTL = 2 * 60 * 60
 
 
+def escribir_tmp(content: bytes, suffix: str = ".xlsx") -> str:
+    """Escribe bytes en un archivo temporal y devuelve su ruta."""
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.write(content)
+    tmp.close()
+    return tmp.name
+
+
 def guardar_preview(ruta: str) -> str:
     pid = str(uuid.uuid4())
     _preview_files[pid] = (ruta, time.monotonic())
@@ -134,8 +142,8 @@ async def excel_a_tmp(
             raise ValueError(f"No se pudo descargar el Excel de Drive: {exc}")
         return tmp.name
     if excel:
-        if not (excel.filename or "").lower().endswith((".xlsx", ".xls")):
-            raise ValueError("El archivo debe ser un Excel (.xlsx o .xls)")
+        if not (excel.filename or "").lower().endswith((".xlsx", ".xls", ".csv")):
+            raise ValueError("El archivo debe ser Excel (.xlsx/.xls) o CSV")
         content = await excel.read()
         if len(content) > MAX_EXCEL_BYTES:
             raise ValueError("El archivo es demasiado grande (máximo 10 MB)")
