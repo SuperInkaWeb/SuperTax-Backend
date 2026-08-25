@@ -44,7 +44,9 @@ def validar_subida(nombre_archivo: str, contenido: bytes) -> None:
             f"Válidos: {', '.join(sorted(EXTENSIONES_VALIDAS))}"
         )
     if len(contenido) > TAMANO_MAXIMO:
-        raise ScannerExtractionError("El archivo supera el límite de 10 MB")
+        raise ScannerExtractionError(
+            f"El archivo supera el límite de {TAMANO_MAXIMO // (1024 * 1024)} MB"
+        )
 
 
 def _limpiar(path: str | None) -> None:
