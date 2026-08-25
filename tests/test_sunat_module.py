@@ -237,3 +237,45 @@ def test_cancelar_marca_cancel_requested(db_session):
     assert resp.status_code == 200
     db_session.refresh(job)
     assert job.cancel_requested is True
+
+
+# ── input_parser: entrada flexible ───────────────────────────────────────────
+def _xlsx(filas: list[list]) -> bytes:
+    import io
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for fila in filas:
+        ws.append(fila)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_input_parser_excel_real_no_revienta_utf8():
+    """Regresión: extraer_comprobantes debe normalizar el Excel binario antes de
+    leerlo (si no, read_csv lo decodifica como UTF-8 y truena)."""
+    import io as _io
+
+    import pandas as pd
+
+    from src.modules.sunat.infrastructure import input_parser as ip
+    from src.modules.sunat.infrastructure.automation.selectores import COLUMNAS_REQUERIDAS
+
+    content = _xlsx([
+        ["REPORTE COMPRAS - COMPAÑÍA ÑUÑOA S.A.C.", None, None, None],
+        ["Serie", "Numero", "RUC Emisor", "Tipo Comprobante"],
+        ["F001", 173, "20100070970", "Factura"],
+        ["B002", 45, "20512345678", "Boleta de Venta"],
+    ])
+    mapeo = ip.analizar(content)["mapeo"]
+    assert mapeo.is_usable
+    comps = ip.extraer_comprobantes(content, mapeo)  # antes: UnicodeDecodeError
+    assert [c.id for c in comps] == ["F001-173", "B002-45"]
+    assert comps[0].tipo_num == 1 and comps[1].tipo_num == 3  # texto → código
+
+    xlsx = ip.a_excel_canonico(comps)
+    df = pd.read_excel(_io.BytesIO(xlsx))
+    assert list(df.columns) == COLUMNAS_REQUERIDAS  # lo que espera automatizar()

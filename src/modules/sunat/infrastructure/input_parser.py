@@ -385,10 +385,15 @@ def _a_tipo_num(valor: str) -> int | None:
 
 
 def extraer_comprobantes(content: bytes, mapeo: MapeoEntrada) -> list[ComprobanteEntrada]:
-    """Extrae los comprobantes válidos según el mapeo. Descarta filas incompletas."""
+    """Extrae los comprobantes válidos según el mapeo. Descarta filas incompletas.
+
+    El mapeo (encoding/delimitador) se detectó sobre el contenido ya normalizado a
+    texto, así que se normaliza aquí también (idempotente) — de lo contrario un
+    Excel binario se leería como UTF-8 y reventaría.
+    """
     if not mapeo.is_usable:
         raise ValueError("El mapeo no identifica las 4 columnas requeridas")
-    df = _leer_df(content, mapeo)
+    df = _leer_df(normalizar_content(content), mapeo)
     comprobantes: list[ComprobanteEntrada] = []
     for _, fila in df.iterrows():
         serie = str(fila.get(mapeo.col_serie, "")).strip().upper()
