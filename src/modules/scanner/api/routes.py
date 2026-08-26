@@ -125,11 +125,14 @@ def export_documentos(
     (documentos escalares o registros aplanados de planillas)."""
     from src.modules.scanner.infrastructure.report_documentos import generar_excel
 
-    xlsx = generar_excel(payload.filas, payload.columnas, payload.labels)
+    xlsx = generar_excel(
+        payload.filas, payload.columnas, payload.labels, payload.por_documento
+    )
+    nombre = "documentos-por-archivo.xlsx" if payload.por_documento else "documentos.xlsx"
     return StreamingResponse(
         io.BytesIO(xlsx),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="documentos.xlsx"'},
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
     )
 
 

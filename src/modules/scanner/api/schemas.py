@@ -30,6 +30,7 @@ class DocumentosExportInput(BaseModel):
     filas: list[dict[str, Any]] = Field(default_factory=list)
     columnas: list[str] = Field(default_factory=list)
     labels: dict[str, str] = Field(default_factory=dict)
+    por_documento: bool = False
 
 
 class ScannerJobCreated(BaseModel):
