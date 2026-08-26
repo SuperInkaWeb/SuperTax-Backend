@@ -1,7 +1,8 @@
 """Schemas Pydantic del módulo Scanner."""
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.modules.scanner.infrastructure.models import ScannerJobStatus
 
@@ -20,6 +21,15 @@ class DocumentoItem(BaseModel):
 
 class ActualizarCamposInput(BaseModel):
     campos: dict
+
+
+class DocumentosExportInput(BaseModel):
+    """Filas ya aplanadas por el frontend (cada una con 'archivo' + campos),
+    columnas a exportar y etiquetas legibles. El backend arma el .xlsx."""
+
+    filas: list[dict[str, Any]] = Field(default_factory=list)
+    columnas: list[str] = Field(default_factory=list)
+    labels: dict[str, str] = Field(default_factory=dict)
 
 
 class ScannerJobCreated(BaseModel):

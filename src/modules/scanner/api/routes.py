@@ -4,12 +4,16 @@ Endpoints del módulo Scanner (montados bajo /api/scanner).
 Fase 4a: gestión de documentos ya escaneados (listar/editar). El endpoint de
 subida con OCR (`/upload/auto`) se incorpora en la Fase 4b.
 """
+import io
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from src.modules.scanner.api.schemas import (
     ActualizarCamposInput,
     DocumentoItem,
+    DocumentosExportInput,
     ScannerJobCreated,
     ScannerJobStatusResponse,
 )
@@ -110,6 +114,23 @@ def list_documentos(
     offset = max(0, offset)
     docs = SqlDocumentoRepository(db).list_by_company(ctx.company.id, tipo, limit, offset)
     return [DocumentoItem.model_validate(d) for d in docs]
+
+
+@router.post("/documentos/export")
+def export_documentos(
+    payload: DocumentosExportInput,
+    _ctx: ActiveContext = Depends(require_permission("scanner.doc.read")),
+) -> StreamingResponse:
+    """Genera un .xlsx con las filas/columnas que el frontend está mostrando
+    (documentos escalares o registros aplanados de planillas)."""
+    from src.modules.scanner.infrastructure.report_documentos import generar_excel
+
+    xlsx = generar_excel(payload.filas, payload.columnas, payload.labels)
+    return StreamingResponse(
+        io.BytesIO(xlsx),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="documentos.xlsx"'},
+    )
 
 
 @router.put("/documentos/{doc_id}", response_model=DocumentoItem)
