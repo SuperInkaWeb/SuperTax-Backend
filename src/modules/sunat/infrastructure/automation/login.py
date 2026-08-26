@@ -2,19 +2,19 @@ import urllib.parse
 
 from playwright.sync_api import TimeoutError as PWTimeoutError
 
+from .navegacion import _dismiss_modal_sesion, _js_click, _wire_debug
 from .selectores import (
     CSS_IFRAME_APP,
     CSS_IFRAME_VCE,
     DEBUG,
     WAIT_ANGULAR_FILTRO_MS,
-    XPATH_FILTRO_RECIBIDO,
-    XPATH_FINALIZAR,
+    XPATH_BUSCADOR,
     XPATH_CONTINUAR_SIN_CONFIRMAR,
     XPATH_EMPRESAS,
-    XPATH_BUSCADOR,
+    XPATH_FILTRO_RECIBIDO,
+    XPATH_FINALIZAR,
     XPATH_RUC_EMISOR,
 )
-from .navegacion import _wire_debug, _js_click, _dismiss_modal_sesion
 
 
 def _hacer_login(page, context, config, log):

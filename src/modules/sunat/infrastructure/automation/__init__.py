@@ -8,21 +8,15 @@ from playwright.sync_api import sync_playwright
 from src.modules.sunat.infrastructure.automation.correo import enviar_agrupado, enviar_individual
 from src.modules.sunat.infrastructure.automation.drive import DriveClient, extraer_id
 
-from .selectores import (
-    COLUMNAS_REQUERIDAS,
-    ES_LOCAL,
-    TIPO_CP_MAP,
-    DriveTokenExpirado,
-    RefreshNecesario,
-)
-from .navegacion import _recuperar, _recuperar_con_refresh, _wire_debug
+from .consultacpe import TokenExpirado, descargar_archivo
 from .login import _hacer_login, _navegar_al_modulo
-from .descarga import _procesar_comprobante
+from .navegacion import _wire_debug
+from .selectores import COLUMNAS_REQUERIDAS, ES_LOCAL, DriveTokenExpirado
+from .token import capturar_tokens, extraer_token
 
 __all__ = [
     "automatizar",
     "ConfigJob",
-    "RefreshNecesario",
     "DriveTokenExpirado",
 ]
 
@@ -116,6 +110,8 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                 " window.chrome = {runtime: {}};"
             )
             _wire_debug(page, log)
+            # Interceptor para tomar el Bearer token de la sesión (para consultacpe).
+            capturados = capturar_tokens(page)
         except Exception as e:
             log(f"[ x ] No se pudo abrir el navegador: {e}")
             return []
@@ -139,15 +135,45 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                     log(f"[ x ] Error en el login SUNAT: {e}")
                 return []
 
-            # --- Navegar al modulo ---
+            # --- Navegar al modulo (dispara la carga del token en el SPA) ---
             try:
-                frame_app = _navegar_al_modulo(page, log)
+                _navegar_al_modulo(page, log)
             except Exception as e:
                 if cancelar and cancelar.is_set():
                     log("[ ! ] Automatizacion cancelada.")
                 else:
                     log(f"[ x ] Error navegando al modulo: {e}")
                 return []
+
+            # --- Token de la sesión (se descarga por HTTP con consultacpe) ---
+            token = extraer_token(page, capturados)
+            if not token:
+                log("[ x ] No se pudo obtener el token de la sesion SUNAT.")
+                return []
+            log("   [ v ] Token de sesion obtenido")
+
+            def _refrescar_token():
+                """Re-navega para que el SPA emita un token nuevo y lo re-extrae."""
+                try:
+                    _navegar_al_modulo(page, log)
+                    page.wait_for_timeout(1500)
+                    return extraer_token(page, capturados)
+                except Exception as exc:
+                    log(f"   [ x ] No se pudo refrescar el token: {str(exc)[:80]}")
+                    return None
+
+            def _bajar(tipo_archivo, ruc_e, tipo_cod, serie_c, numero_c):
+                """Descarga un archivo; si el token expiró (401), lo refresca 1 vez."""
+                nonlocal token
+                try:
+                    return descargar_archivo(token, ruc_e, tipo_cod, serie_c, numero_c, tipo_archivo)
+                except TokenExpirado:
+                    log("   [ ! ] Token de sesion expirado — refrescando...")
+                    nuevo = _refrescar_token()
+                    if not nuevo:
+                        raise
+                    token = nuevo
+                    return descargar_archivo(token, ruc_e, tipo_cod, serie_c, numero_c, tipo_archivo)
 
             # --- Inicializar Drive (una sola vez por job) ---
             drive_client    = None
@@ -187,7 +213,7 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
             )
             procesados = 0
 
-            # --- Loop de comprobantes ---
+            # --- Loop de comprobantes (descarga por HTTP: consultacpe) ---
             for num_actual, (_, fila) in enumerate(df.iterrows(), start=1):
                 if cancelar and cancelar.is_set():
                     log("[ ! ] Automatizacion cancelada.")
@@ -198,7 +224,7 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                 serie      = str(fila["Serie del CDP"]).strip()
                 numero     = int(fila["Nro CP o Doc. Nro Inicial (Rango)"])
                 tipo_num   = int(fila["Tipo CP/Doc."]) if not pd.isna(fila["Tipo CP/Doc."]) else 1
-                tipo_texto = TIPO_CP_MAP.get(tipo_num)
+                tipo_cod   = f"{tipo_num:02d}"  # 1->01, 3->03, 7->07, 8->08 (código SUNAT)
                 comp_id    = f"{serie}-{numero}"
 
                 # Modo seleccion manual del usuario
@@ -210,20 +236,6 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                     continue
 
                 flags = solo_faltantes[comp_id] if solo_faltantes else flags_global
-
-                log(f"\n[{num_actual}/{total}] {comp_id} | RUC: {ruc_emisor} | Tipo: {tipo_num}")
-
-                if tipo_texto is None:
-                    log(f"   [ x ] Tipo {tipo_num} no esta en TIPO_CP_MAP — omitiendo.")
-                    log("         Agrega el texto exacto del dropdown de SUNAT a TIPO_CP_MAP.")
-                    resultados.append({"id": comp_id, "pdf": False, "xml": False,
-                                       "pide_pdf": flags.get("pdf", True),
-                                       "pide_xml": flags.get("xml", True),
-                                       "estado": f"Error (tipo {tipo_num})"})
-                    procesados += 1
-                    prog(int(procesados / total_efectivo * 100))
-                    continue
-
                 pide_pdf = flags.get("pdf", True)
                 pide_xml = flags.get("xml", True)
                 pdf_ok   = False
@@ -231,84 +243,34 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                 ruta_pdf = None
                 ruta_xml = None
 
-                # Flags base sin pdf/xml (preserva contexto y otros)
-                flags_base = {k: v for k, v in flags.items() if k not in ("pdf", "xml")}
+                log(f"\n[{num_actual}/{total}] {comp_id} | RUC: {ruc_emisor} | Tipo: {tipo_num}")
 
-                # ── Fase PDF (hasta 4 intentos) ──────────────────────────
-                if pide_pdf:
-                    for intento in range(1, 5):
-                        try:
-                            desc = _procesar_comprobante(
-                                frame_app, page, tipo_texto, ruc_emisor, serie, numero,
-                                config, drive_client, drive_folder_id, agrupados, log,
-                                flags={**flags_base, "pdf": True, "xml": False, "_solo_descarga": True},
-                            )
-                            pdf_ok   = desc["pdf"]
-                            ruta_pdf = desc["ruta_pdf"]
-                            break
-                        except RefreshNecesario as e:
-                            log(f"   [ ! ] PDF – {e} — requiere refresh")
-                            try:
-                                frame_app = _recuperar_con_refresh(page, log)
-                            except Exception as e2:
-                                log(f"   [ x ] Refresh fallido: {str(e2)[:60]}")
-                                log("   [ x ] PDF: abortando — no se puede recuperar el frame")
-                                break
-                            if intento >= 4:
-                                log("   [ x ] PDF: no se descargo tras 4 intentos")
-                            else:
-                                log("   [ . ] Esperando 30s antes de reintentar PDF...")
-                                page.wait_for_timeout(30000)
-                        except Exception as e:
-                            if cancelar and cancelar.is_set():
-                                log("[ ! ] Automatizacion cancelada.")
-                                cancelado = True
-                                break
-                            if intento < 4:
-                                log(f"   [ ! ] PDF intento {intento} fallido — reintentando...")
-                                _recuperar(frame_app, page, log)
-                                page.wait_for_timeout(3000)
-                            else:
-                                log(f"   [ x ] PDF: error tras 4 intentos ({str(e)[:80]})")
-                                _recuperar(frame_app, page, log)
-
-                # ── Fase XML (hasta 4 intentos, independiente del PDF) ───
-                if pide_xml and not cancelado:
-                    for intento in range(1, 5):
-                        try:
-                            desc = _procesar_comprobante(
-                                frame_app, page, tipo_texto, ruc_emisor, serie, numero,
-                                config, drive_client, drive_folder_id, agrupados, log,
-                                flags={**flags_base, "pdf": False, "xml": True, "_solo_descarga": True},
-                            )
-                            xml_ok   = desc["xml"]
-                            ruta_xml = desc["ruta_xml"]
-                            break
-                        except RefreshNecesario as e:
-                            log(f"   [ ! ] XML – {e} — requiere refresh")
-                            try:
-                                frame_app = _recuperar_con_refresh(page, log)
-                            except Exception as e2:
-                                log(f"   [ x ] Refresh fallido: {str(e2)[:60]}")
-                                log("   [ x ] XML: abortando — no se puede recuperar el frame")
-                                break
-                            if intento >= 4:
-                                log("   [ x ] XML: no se descargo tras 4 intentos")
-                            else:
-                                log("   [ . ] Esperando 30s antes de reintentar XML...")
-                                page.wait_for_timeout(30000)
-                        except Exception as e:
-                            if cancelar and cancelar.is_set():
-                                log("[ ! ] Automatizacion cancelada.")
-                                cancelado = True
-                                break
-                            if intento < 4:
-                                log(f"   [ ! ] XML intento {intento} fallido — reintentando...")
-                                _recuperar(frame_app, page, log)
-                                page.wait_for_timeout(3000)
-                            else:
-                                log(f"   [ x ] XML: error tras 4 intentos ({str(e)[:80]})")
-                                _recuperar(frame_app, page, log)
+                try:
+                    if pide_xml:
+                        res = _bajar("xml", ruc_emisor, tipo_cod, serie, numero)
+                        if res:
+                            nombre, contenido = res
+                            ruta_xml = os.path.join(config["descargas"], nombre)
+                            with open(ruta_xml, "wb") as fx:
+                                fx.write(contenido)
+                            xml_ok = True
+                            log(f"   [ v ] XML: {nombre}")
+                        else:
+                            log("   [ - ] XML no disponible")
+                    if pide_pdf:
+                        res = _bajar("pdf", ruc_emisor, tipo_cod, serie, numero)
+                        if res:
+                            nombre, contenido = res
+                            ruta_pdf = os.path.join(config["descargas"], nombre)
+                            with open(ruta_pdf, "wb") as fp:
+                                fp.write(contenido)
+                            pdf_ok = True
+                            log(f"   [ v ] PDF: {nombre}")
+                        else:
+                            log("   [ - ] PDF no disponible")
+                except TokenExpirado:
+                    log("[ x ] La sesion SUNAT expiro y no se pudo refrescar. Deteniendo.")
+                    cancelado = True
 
                 # ── Drive y correo (con lo que se haya descargado) ───────
                 if not cancelado:

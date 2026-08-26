@@ -93,11 +93,6 @@ WAIT_LIMPIAR_MS        = 1500  # tras Limpiar, Angular resetea el formulario
 
 
 # ── Excepciones ──────────────────────────────────────────────────────────────
-class RefreshNecesario(Exception):
-    """SUNAT quedo bloqueado — se necesita refrescar la pagina y re-navegar."""
-    pass
-
-
 class DriveTokenExpirado(Exception):
     """El token de Google Drive expiro o fue revocado."""
     pass
