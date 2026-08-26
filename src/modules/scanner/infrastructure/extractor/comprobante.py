@@ -283,14 +283,76 @@ def _periodo_servicio(texto: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+_DESC_UNIDADES = {
+    "unidad", "unidades", "und", "unid", "niu", "zz", "kg", "kgm", "grm", "ltr",
+    "gln", "mtr", "m2", "m3", "pza", "cja", "box", "bls", "doc", "par", "gr",
+    "lt", "mt",
+}
+# Encabezados de columna que NO son el nombre del ítem (línea completa).
+_DESC_SKIP = {
+    "cantidad", "unidad medida", "unidad de medida", "valor unitario",
+    "precio unitario", "precio", "valor venta", "importe", "importe total",
+    "icbper", "isc", "igv", "descuento", "descuentos", "sub total", "subtotal",
+    "total", "codigo", "código", "cod", "item", "monto", "afecto", "num", "nro",
+} | _DESC_UNIDADES
+_DESC_NUM = re.compile(r"(?i)^(?:s/\.?|[\d.,/%()$-]+)$")
+
+
+def _es_num_tok(tok: str) -> bool:
+    return bool(_DESC_NUM.match(tok))
+
+
+def _item_de_fila(linea: str) -> str | None:
+    """De una fila de tabla ('1.00 UNIDAD PRODUCTO X 50.00 0.00') deja el nombre del
+    ítem: quita cantidad/unidad al inicio y los montos al final."""
+    toks = linea.split()
+    i, j = 0, len(toks)
+    while i < j and (_es_num_tok(toks[i]) or toks[i].lower() in _DESC_UNIDADES):
+        i += 1
+    while j > i and _es_num_tok(toks[j - 1]):
+        j -= 1
+    medio = " ".join(toks[i:j]).strip()
+    return medio if re.search(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]", medio) else None
+
+
 def _descripcion(texto: str) -> str | None:
-    """Detalle/concepto del comprobante (best-effort: en facturas es la tabla de
-    ítems, así que captura la primera línea de descripción)."""
-    m = re.search(
-        r"(?:Descripci[oó]n|Concepto|Detalle|Servicio|Producto)\s*[:\-]?\s*([^\n]{5,120})",
-        texto, re.IGNORECASE
+    """Nombre/concepto del ítem del comprobante.
+
+    'Descripción' suele ser un encabezado de columna; el ítem real va en la fila de
+    datos (mismo renglón o el siguiente). Se ubica el encabezado y se extrae el ítem
+    saltando cantidad/unidad y montos. Best-effort sobre texto de PDF/OCR, que a
+    veces aplana la tabla en una línea de headers + una de datos.
+    """
+    lineas = [ln.strip() for ln in texto.splitlines() if ln.strip()]
+    idx = next(
+        (i for i, ln in enumerate(lineas)
+         if re.search(r"(?i)descripci[oó]n|concepto|detalle", ln)),
+        None,
     )
-    return m.group(1).strip() if m else None
+    if idx is None:
+        return None
+
+    # "Descripción: X" / "Por concepto de: X" en el mismo renglón (permite unas
+    # palabras entre la etiqueta y el ':').
+    m = re.search(
+        r"(?i)(?:descripci[oó]n|concepto|detalle)[^:\n]{0,25}:\s*(.{4,120})", lineas[idx]
+    )
+    if m:
+        cand = m.group(1).strip()
+        if re.search(r"[A-Za-zÁÉÍÓÚÑ]", cand):
+            return cand[:120]
+
+    # Tabla: la fila de datos viene abajo. Saltar encabezados/unidades/montos.
+    for ln in lineas[idx + 1: idx + 16]:
+        low = ln.lower().rstrip(".:")
+        if _DESC_NUM.match(ln) or low in _DESC_SKIP or len(ln) < 4:
+            continue
+        if low.startswith(("valor ", "precio ", "importe", "sub total", "otros ", "mto")):
+            continue
+        item = _item_de_fila(ln)
+        if item:
+            return item[:120]
+    return None
 
 
 def _doc_referencia_tipo(texto: str) -> str | None:
