@@ -4,7 +4,7 @@ Endpoints del módulo Scanner (montados bajo /api/scanner).
 Fase 4a: gestión de documentos ya escaneados (listar/editar). El endpoint de
 subida con OCR (`/upload/auto`) se incorpora en la Fase 4b.
 """
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from src.modules.scanner.api.schemas import (
@@ -29,18 +29,31 @@ router = APIRouter(tags=["scanner"], dependencies=[Depends(require_module("scann
 @router.post("/upload/auto", response_model=ScannerJobCreated, status_code=status.HTTP_201_CREATED)
 async def upload_auto(
     file: UploadFile = File(...),
+    tipo: str = Form(""),
     ctx: ActiveContext = Depends(require_permission("scanner.doc.create")),
     db: Session = Depends(get_db),
     storage: FileStorage = Depends(get_storage),
 ) -> ScannerJobCreated:
-    """Sube un documento y lo encola para extracción por OCR (worker aparte)."""
+    """Sube un documento y lo encola para extracción por OCR (worker aparte).
+
+    `tipo` opcional fuerza el tipo de documento (salta la auto-detección); vacío o
+    'auto' = detección automática.
+    """
     from src.modules.scanner.application.extraccion import ScannerExtractionError
     from src.modules.scanner.application.jobs import encolar_documento
+    from src.modules.scanner.infrastructure.extractor.clasificador import ETIQUETAS
+
+    tipo_forzado = tipo.strip()
+    if tipo_forzado in ("", "auto"):
+        tipo_forzado = ""
+    elif tipo_forzado not in ETIQUETAS or tipo_forzado == "desconocido":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"Tipo no válido: {tipo_forzado}")
 
     contenido = await file.read()
     try:
         job = encolar_documento(
-            db, storage, ctx.company.id, ctx.user.id, file.filename or "archivo", contenido
+            db, storage, ctx.company.id, ctx.user.id, file.filename or "archivo",
+            contenido, tipo_forzado=tipo_forzado,
         )
     except ScannerExtractionError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))

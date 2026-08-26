@@ -37,6 +37,8 @@ class ScannerJobModel(Base):
     created_by_id: Mapped[int] = mapped_column(ForeignKey("core.users.id"))
     nombre_archivo: Mapped[str] = mapped_column(String(255))
     storage_path: Mapped[str] = mapped_column(String(500))
+    # Tipo elegido por el usuario (salta la auto-clasificación). None = automático.
+    tipo_forzado: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[ScannerJobStatus] = mapped_column(
         Enum(ScannerJobStatus, name="scanner_job_status"),
         default=ScannerJobStatus.en_cola,

@@ -88,6 +88,7 @@ def procesar_archivo(
     user_id: int,
     nombre_archivo: str,
     ruta_local: str,
+    tipo_forzado: str | None = None,
 ) -> DocumentoModel:
     """
     Ejecuta el OCR/clasificación/extracción sobre un archivo ya en disco local
@@ -128,8 +129,12 @@ def procesar_archivo(
             texto_raw = pdf_a_texto(ruta_local)
         texto_limpio = limpiar_texto(texto_raw)
 
-        # 2. Clasificar
-        tipo, confianza = clasificar(texto_limpio)
+        # 2. Clasificar (o usar el tipo forzado por el usuario, que salta la
+        #    auto-detección y sus fallbacks de más abajo).
+        if tipo_forzado:
+            tipo, confianza = tipo_forzado, 1.0
+        else:
+            tipo, confianza = clasificar(texto_limpio)
 
         # 3. Fallback OCR para PDF escaneado sin texto
         if (

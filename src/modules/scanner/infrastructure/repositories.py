@@ -17,13 +17,19 @@ class SqlScannerJobRepository:
         self._db = db
 
     def create(
-        self, company_id: int, user_id: int, nombre_archivo: str, storage_path: str
+        self,
+        company_id: int,
+        user_id: int,
+        nombre_archivo: str,
+        storage_path: str,
+        tipo_forzado: str | None = None,
     ) -> ScannerJobModel:
         job = ScannerJobModel(
             company_id=company_id,
             created_by_id=user_id,
             nombre_archivo=nombre_archivo,
             storage_path=storage_path,
+            tipo_forzado=tipo_forzado,
         )
         self._db.add(job)
         self._db.commit()

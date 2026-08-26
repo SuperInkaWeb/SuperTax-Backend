@@ -31,6 +31,7 @@ def encolar_documento(
     user_id: int,
     nombre_archivo: str,
     contenido: bytes,
+    tipo_forzado: str | None = None,
 ) -> ScannerJobModel:
     """Valida y encola un documento para extracción por el worker."""
     validar_subida(nombre_archivo, contenido)
@@ -42,6 +43,7 @@ def encolar_documento(
         user_id=user_id,
         nombre_archivo=nombre_archivo,
         storage_path=storage_path,
+        tipo_forzado=tipo_forzado or None,
     )
 
 
@@ -61,7 +63,8 @@ def procesar_job(db: Session, storage: FileStorage, job_id: int) -> None:
             ruta_local = tmp.name
 
         doc = procesar_archivo(
-            db, storage, job.company_id, job.created_by_id, job.nombre_archivo, ruta_local
+            db, storage, job.company_id, job.created_by_id, job.nombre_archivo, ruta_local,
+            tipo_forzado=job.tipo_forzado,
         )
         repo.mark_completado(job_id, doc.id)
     except ScannerExtractionError as exc:
