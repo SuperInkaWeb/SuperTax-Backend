@@ -73,7 +73,7 @@ def _intercambiar_code(code: str) -> dict:
         data=data,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    with urllib.request.urlopen(req) as resp:  # noqa: S310 — endpoint fijo de Google
+    with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 — endpoint fijo de Google
         return json.loads(resp.read())
 
 
@@ -82,7 +82,8 @@ def procesar_callback(db: Session, code: str, state: str) -> None:
     company_id = _leer_state(state)
     try:
         token_data = _intercambiar_code(code)
-    except urllib.error.HTTPError:
+    except urllib.error.URLError:
+        # HTTPError (respuesta de error de Google) y fallos de red/timeout.
         raise DriveError("Error al conectar con Google Drive")
 
     SqlDriveTokenRepository(db).upsert(
