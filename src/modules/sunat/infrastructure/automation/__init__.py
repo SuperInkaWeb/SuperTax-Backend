@@ -11,13 +11,12 @@ from src.modules.sunat.infrastructure.automation.drive import DriveClient
 from .consultacpe import TokenExpirado, descargar_archivo
 from .login import _hacer_login, _navegar_al_modulo
 from .navegacion import _wire_debug
-from .selectores import COLUMNAS_REQUERIDAS, ES_LOCAL, DriveTokenExpirado
+from .selectores import COLUMNAS_REQUERIDAS, ES_LOCAL
 from .token import capturar_tokens, extraer_token
 
 __all__ = [
     "automatizar",
     "ConfigJob",
-    "DriveTokenExpirado",
 ]
 
 
@@ -290,10 +289,6 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                             else:
                                 agrupados.append((serie, numero, ruta_xml, ruta_pdf))
                                 log("   [ + ] Archivos acumulados para envio final")
-                    except DriveTokenExpirado:
-                        log("[ x ] Google Drive: token expirado o revocado.")
-                        log("      Reconecta tu cuenta de Google desde la app y vuelve a intentar.")
-                        cancelado = True
                     except Exception as e:
                         if "invalid_grant" in str(e):
                             log("[ x ] Google Drive: token expirado o revocado.")

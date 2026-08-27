@@ -90,9 +90,3 @@ WAIT_MENU_EXPAND_MS    = 800   # entre clics del arbol de menu (animacion de exp
 WAIT_ANGULAR_FILTRO_MS = 2000  # tras cambiar radio button, Angular actualiza el formulario
 WAIT_PDF_XML_MS        = 800   # pausa entre descarga PDF y XML
 WAIT_LIMPIAR_MS        = 1500  # tras Limpiar, Angular resetea el formulario
-
-
-# ── Excepciones ──────────────────────────────────────────────────────────────
-class DriveTokenExpirado(Exception):
-    """El token de Google Drive expiro o fue revocado."""
-    pass
