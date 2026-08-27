@@ -5,6 +5,12 @@ FastAPI. Cada automatización es un módulo con arquitectura hexagonal sobre un
 núcleo compartido (`platform/`): identidad (Auth0), tenencia multi-empresa,
 autorización, storage, jobs y eventos.
 
+## Documentación
+
+La documentación completa vive en [`docs/`](./docs/): arquitectura, módulos,
+plataforma, integraciones, operaciones y decisiones (ADR). Empieza por
+[`docs/README.md`](./docs/README.md).
+
 ## Estructura
 
 ```
@@ -64,23 +70,12 @@ lint-imports           # fronteras entre módulos (arquitectura)
 
 ## Despliegue
 
-Se despliega con el [`Dockerfile`](./Dockerfile) (una sola imagen) corrida como
-**dos servicios** desde el mismo repo:
+Una imagen ([`Dockerfile`](./Dockerfile)) corrida como **4 servicios** desde el
+mismo repo: `web` (comando por defecto) + 3 workers (`sunat`/`sire`/`scanner`,
+sobreescriben el *start command*). Todos comparten base de datos y **storage S3**.
 
-| Servicio | Comando | Rol |
-|----------|---------|-----|
-| **web** (comando por defecto de la imagen) | `uvicorn src.main:app --host 0.0.0.0 --port $PORT` | API HTTP |
-| **sire-worker** (sobreescribe el comando) | `python -m workers.sire_worker` | Procesa conciliaciones SIRE |
-| **scanner-worker** (sobreescribe el comando) | `python -m workers.scanner_worker` | Procesa OCR de documentos |
-| **sunat-worker** (sobreescribe el comando) | `python -m workers.sunat_worker` | Procesa descargas SUNAT (Playwright) |
-
-En Railway/Render se crean estos servicios apuntando al mismo repo: **web** usa
-el comando por defecto del `Dockerfile`; cada **worker** sobreescribe el *start
-command*. Todos comparten la misma base de datos y **el mismo storage S3** (los
-workers leen/escriben archivos que la API sirve; con disco local no funcionaría).
-
-**Migraciones**: ejecutar `alembic upgrade head` como comando de *pre-deploy* del
-servicio web (o tras cada cambio de esquema).
+Guía completa (Neon + R2 + Railway + Vercel + Auth0):
+[`docs/operations/deploy.md`](./docs/operations/deploy.md).
 
 ## Estado
 

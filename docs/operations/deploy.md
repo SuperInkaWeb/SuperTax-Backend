@@ -20,7 +20,7 @@ Railway ─ web (FastAPI)   │   Vercel ─ frontend (React SPA)
 - **Frontend** (`plataforma-frontend`) → Vercel.
 - **Base de datos** → Neon.
 - **Archivos generados** (reportes SIRE, descargas SUNAT, salidas del Scanner) → Cloudflare R2 o AWS S3.
-- **Identidad** → Auth0 (tenant único ya configurado; ver `SETUP-AUTH0.md`).
+- **Identidad** → Auth0 (tenant único ya configurado; ver [../platform/auth-setup.md](../platform/auth-setup.md)).
 
 > **Requisito de almacenamiento (no opcional en esta topología).**
 > Los workers corren en servicios separados del `web`, cada uno con su propio disco,
