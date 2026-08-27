@@ -1,50 +1,29 @@
 import os
-import re
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaFileUpload
 
 from src.platform.config.settings import settings
 
-# Scope amplio a proposito: se necesita para leer un Excel arbitrario del Drive
-# del usuario via enlace (drive.file no lo permite). Tokens cifrados en reposo.
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+# Scope acotado: la app solo accede a los archivos/carpetas que ella misma crea.
+# No requiere la verificación de Google que exige el scope amplio 'drive', y
+# reduce el radio de daño (no puede tocar el resto del Drive del usuario). El
+# Excel de entrada ya no se lee del Drive: el usuario lo elige con el Picker en
+# el navegador, que lo descarga y lo sube como archivo normal.
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-
-def extraer_id(url_o_id: str) -> str:
-    for pattern in [
-        r"/folders/([a-zA-Z0-9_-]+)",
-        r"/d/([a-zA-Z0-9_-]+)",
-        r"[?&]id=([a-zA-Z0-9_-]+)",
-    ]:
-        m = re.search(pattern, url_o_id)
-        if m:
-            return m.group(1)
-    return url_o_id.strip()
-
-
-def _build_service(access_token: str, refresh_token: str = ""):
-    creds = Credentials(
-        token=access_token,
-        refresh_token=refresh_token or None,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=settings.GOOGLE_CLIENT_ID,
-        client_secret=settings.GOOGLE_CLIENT_SECRET,
-        scopes=SCOPES,
-    )
-    if not creds.valid and creds.refresh_token:
-        creds.refresh(Request())
-    return build("drive", "v3", credentials=creds)
+_MIME_FOLDER = "application/vnd.google-apps.folder"
 
 
 class DriveClient:
-    """Construye el servicio de Drive una sola vez y lo reutiliza para todas las
-    subidas de un job (evita reconstruir/refrescar credenciales en cada archivo).
-    Si se pasa `on_refresh`, persiste el access token cada vez que cambie."""
+    """Sube los PDF/XML de un job a una carpeta PROPIA de la app en el Drive del
+    usuario (con `drive.file` la app solo ve/gestiona lo que ella crea). La
+    carpeta se busca o se crea una vez por job. Si se pasa `on_refresh`, persiste
+    el access token cada vez que cambie."""
 
-    def __init__(self, access_token: str, refresh_token: str = "", on_refresh=None):
+    def __init__(self, access_token, refresh_token="", on_refresh=None, folder_name="SuperTax"):
         self._creds = Credentials(
             token=access_token,
             refresh_token=refresh_token or None,
@@ -59,10 +38,11 @@ class DriveClient:
             self._creds.refresh(Request())
             self._maybe_persist()
         self._service = build("drive", "v3", credentials=self._creds)
+        self._folder_id = self._asegurar_carpeta(folder_name)
 
     def _maybe_persist(self):
         # googleapiclient refresca las credenciales in-place ante un 401; si el
-        # token cambio, lo persistimos una vez.
+        # token cambió, lo persistimos una vez.
         token = self._creds.token
         if self._on_refresh and token and token != self._last_token:
             self._last_token = token
@@ -71,31 +51,31 @@ class DriveClient:
             except Exception:
                 pass
 
-    def subir_archivo(self, folder_id: str, file_path: str) -> str:
+    def _asegurar_carpeta(self, nombre: str) -> str:
+        """Busca la carpeta propia de la app por nombre; si no existe, la crea.
+        Con `drive.file`, `list` solo devuelve lo que la app creó, así que no hay
+        colisión con carpetas del usuario que se llamen igual."""
+        seguro = nombre.replace("'", " ").strip() or "SuperTax"
+        query = f"mimeType='{_MIME_FOLDER}' and name='{seguro}' and trashed=false"
+        res = self._service.files().list(
+            q=query, spaces="drive", fields="files(id)", pageSize=1
+        ).execute()
+        existentes = res.get("files", [])
+        if existentes:
+            return existentes[0]["id"]
+        carpeta = self._service.files().create(
+            body={"name": seguro, "mimeType": _MIME_FOLDER}, fields="id"
+        ).execute()
+        self._maybe_persist()
+        return carpeta["id"]
+
+    def subir_archivo(self, file_path: str) -> str:
         nombre = os.path.basename(file_path)
         mime = "application/pdf" if file_path.endswith(".pdf") else "text/xml"
         f = self._service.files().create(
-            body={"name": nombre, "parents": [folder_id]},
+            body={"name": nombre, "parents": [self._folder_id]},
             media_body=MediaFileUpload(file_path, mimetype=mime, resumable=False),
             fields="id",
         ).execute()
         self._maybe_persist()
         return f.get("id", "")
-
-
-def descargar_excel(url_o_id: str, dest_path: str, access_token: str, refresh_token: str = ""):
-    service = _build_service(access_token, refresh_token)
-    file_id = extraer_id(url_o_id)
-    mime = service.files().get(fileId=file_id, fields="mimeType").execute().get("mimeType", "")
-    if mime == "application/vnd.google-apps.spreadsheet":
-        request = service.files().export_media(
-            fileId=file_id,
-            mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    else:
-        request = service.files().get_media(fileId=file_id)
-    with open(dest_path, "wb") as fh:
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()

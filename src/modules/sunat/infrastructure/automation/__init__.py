@@ -6,7 +6,7 @@ import pandas as pd
 from playwright.sync_api import sync_playwright
 
 from src.modules.sunat.infrastructure.automation.correo import enviar_agrupado, enviar_individual
-from src.modules.sunat.infrastructure.automation.drive import DriveClient, extraer_id
+from src.modules.sunat.infrastructure.automation.drive import DriveClient
 
 from .consultacpe import TokenExpirado, descargar_archivo
 from .login import _hacer_login, _navegar_al_modulo
@@ -32,7 +32,6 @@ class ConfigJob(TypedDict, total=False):
     destino: str
     modo_correo: str
     usar_drive: bool
-    drive_folder: str
     drive_access_token: str
     drive_refresh_token: str
     excel: str
@@ -176,16 +175,17 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                     return descargar_archivo(token, ruc_e, tipo_cod, serie_c, numero_c, tipo_archivo)
 
             # --- Inicializar Drive (una sola vez por job) ---
-            drive_client    = None
-            drive_folder_id = ""
-            if config.get("usar_drive") and config.get("drive_folder") and config.get("drive_access_token"):
+            # Scope acotado (drive.file): se sube a una carpeta propia de la app
+            # ("SuperTax {ruc}") que ella misma crea; no se usa carpeta del usuario.
+            drive_client = None
+            if config.get("usar_drive") and config.get("drive_access_token"):
                 try:
                     drive_client = DriveClient(
                         config["drive_access_token"],
                         config.get("drive_refresh_token", ""),
                         on_refresh=config.get("_persist_drive_token"),
+                        folder_name=f"SuperTax {config.get('ruc', '')}".strip(),
                     )
-                    drive_folder_id = extraer_id(config["drive_folder"])
                     log("   [ v ] Google Drive listo")
                 except Exception as e:
                     log(f"   [ ! ] No se pudo inicializar Google Drive: {e}")
@@ -277,9 +277,9 @@ def automatizar(config: "ConfigJob", log_q, prog_q) -> List[Dict]:
                     try:
                         if drive_client and (ruta_pdf or ruta_xml):
                             if ruta_pdf:
-                                drive_client.subir_archivo(drive_folder_id, ruta_pdf)
+                                drive_client.subir_archivo(ruta_pdf)
                             if ruta_xml:
-                                drive_client.subir_archivo(drive_folder_id, ruta_xml)
+                                drive_client.subir_archivo(ruta_xml)
                             log("   [ v ] Subido a Google Drive")
                         if (config.get("usar_correo") and config["gmail_user"]
                                 and config["gmail_pass"] and config["destino"]

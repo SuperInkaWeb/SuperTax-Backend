@@ -20,9 +20,10 @@ from src.platform.security import decrypt_field, encrypt_field
 
 _AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/auth"
 _TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-# Scope amplio ('drive') a propósito: leer el Excel desde un enlace arbitrario
-# del Drive del usuario requiere más que 'drive.file'.
-_SCOPE = "https://www.googleapis.com/auth/drive"
+# Scope acotado: la app solo gestiona sus propios archivos (la carpeta que crea
+# para subir los comprobantes). Evita la verificación de Google del scope amplio
+# 'drive'. El Excel de entrada ya no se lee del Drive: se elige con el Picker.
+_SCOPE = "https://www.googleapis.com/auth/drive.file"
 
 
 class DriveError(Exception):

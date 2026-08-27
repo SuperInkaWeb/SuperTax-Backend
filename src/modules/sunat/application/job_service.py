@@ -1,6 +1,6 @@
 """
 Lógica de negocio de los jobs de descarga SUNAT: arma la configuración, resuelve
-el Excel (subido / caché de preview / enlace de Drive) y lanza el job.
+el Excel (subido / caché de preview) y lanza el job.
 
 No sabe de HTTP; la API traduce `SunatJobError` a 400.
 """
@@ -97,14 +97,14 @@ def _drive_tokens(db: Session, company_id: int) -> tuple[str, str]:
     return access, refresh
 
 
-async def _resolver_excel(preview_id, excel, excel_link, drive_access, drive_refresh) -> str:
+async def _resolver_excel(preview_id, excel) -> str:
     # El preview_id ya apunta a un xlsx canónico (lo produjo previsualizar()).
     excel_path = runner.consumir_preview(preview_id) if preview_id else None
     if excel_path:
         return excel_path
     # Sin preview: se subió el archivo directo → normalizar a canónico (auto-detección).
     try:
-        ruta = await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
+        ruta = await runner.excel_a_tmp(excel)
     except ValueError as exc:
         raise SunatJobError(str(exc))
     return _normalizar_a_canonico(ruta)
@@ -117,7 +117,7 @@ async def iniciar(
     user_id: int,
     *,
     ruc, usuario, clave, usar_correo, gmail_user, gmail_pass, destino, modo_correo,
-    usar_drive, drive_folder, excel_link, descargar_pdf, descargar_xml,
+    usar_drive, descargar_pdf, descargar_xml,
     comprobantes_seleccionados, preview_id, excel,
 ) -> str:
     if usar_correo and not _es_email_valido(destino):
@@ -125,9 +125,7 @@ async def iniciar(
 
     ruc, usuario, clave = _resolver_login(db, company_id, ruc, usuario, clave)
     drive_access, drive_refresh = _drive_tokens(db, company_id)
-    excel_path = await _resolver_excel(
-        preview_id, excel, excel_link, drive_access, drive_refresh
-    )
+    excel_path = await _resolver_excel(preview_id, excel)
     config = {
         "ruc": ruc,
         "usuario": usuario,
@@ -138,7 +136,6 @@ async def iniciar(
         "destino": destino,
         "modo_correo": modo_correo,
         "usar_drive": usar_drive,
-        "drive_folder": drive_folder.strip(),
         "drive_access_token": drive_access,
         "drive_refresh_token": drive_refresh,
         "descargar_pdf": descargar_pdf,
@@ -155,7 +152,7 @@ async def forzar_faltantes(
     user_id: int,
     *,
     ruc, usuario, clave, usar_correo, gmail_user, gmail_pass, destino, modo_correo,
-    usar_drive, drive_folder, excel_link, resultados_previos, excel,
+    usar_drive, resultados_previos, excel,
 ) -> str:
     if usar_correo and not _es_email_valido(destino):
         raise SunatJobError("El correo de destino no tiene un formato válido")
@@ -179,7 +176,7 @@ async def forzar_faltantes(
 
     drive_access, drive_refresh = _drive_tokens(db, company_id)
     try:
-        ruta = await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
+        ruta = await runner.excel_a_tmp(excel)
     except ValueError as exc:
         raise SunatJobError(str(exc))
     excel_path = _normalizar_a_canonico(ruta)
@@ -194,7 +191,6 @@ async def forzar_faltantes(
         "destino": destino,
         "modo_correo": modo_correo,
         "usar_drive": usar_drive,
-        "drive_folder": drive_folder.strip(),
         "drive_access_token": drive_access,
         "drive_refresh_token": drive_refresh,
         "solo_faltantes": solo_faltantes,
@@ -203,7 +199,7 @@ async def forzar_faltantes(
 
 
 async def previsualizar(
-    db: Session, company_id: int, *, excel, excel_link, mapeo_manual: dict | None = None
+    db: Session, company_id: int, *, excel, mapeo_manual: dict | None = None
 ) -> dict:
     """Analiza la entrada (cualquier formato), propone el mapeo de columnas y, si es
     usable, devuelve los comprobantes + un preview_id que apunta al xlsx canónico.
@@ -211,9 +207,8 @@ async def previsualizar(
     Si el mapeo no es confiable, devuelve cabeceras + muestra + mapeo detectado para
     que la UI lo corrija (y vuelva a llamar con `mapeo_manual`). Contrato tipo SIRE.
     """
-    drive_access, drive_refresh = _drive_tokens(db, company_id)
     try:
-        ruta = await runner.excel_a_tmp(excel, excel_link, drive_access, drive_refresh)
+        ruta = await runner.excel_a_tmp(excel)
     except ValueError as exc:
         raise SunatJobError(str(exc))
 

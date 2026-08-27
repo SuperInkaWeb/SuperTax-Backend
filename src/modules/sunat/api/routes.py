@@ -209,7 +209,6 @@ def drive_desconectar(
 # ─────────────────────── Ejecución de descargas ───────────────────────
 @router.post("/preview-excel", dependencies=_MODULO)
 async def preview_excel(
-    excel_link: str = Form(""),
     mapeo: str = Form(""),
     excel: UploadFile | None = File(None),
     ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
@@ -223,7 +222,7 @@ async def preview_excel(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="mapeo no es JSON válido")
     try:
         return await job_service.previsualizar(
-            db, ctx.company.id, excel=excel, excel_link=excel_link, mapeo_manual=mapeo_manual
+            db, ctx.company.id, excel=excel, mapeo_manual=mapeo_manual
         )
     except job_service.SunatJobError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -240,8 +239,6 @@ async def iniciar(
     destino: str = Form(""),
     modo_correo: str = Form("individual"),
     usar_drive: str = Form("false"),
-    drive_folder: str = Form(""),
-    excel_link: str = Form(""),
     descargar_pdf: str = Form("true"),
     descargar_xml: str = Form("true"),
     comprobantes_ids: str = Form(""),
@@ -266,8 +263,6 @@ async def iniciar(
             destino=destino,
             modo_correo=modo_correo,
             usar_drive=_b(usar_drive),
-            drive_folder=drive_folder,
-            excel_link=excel_link,
             descargar_pdf=_b(descargar_pdf),
             descargar_xml=_b(descargar_xml),
             comprobantes_seleccionados=(
@@ -292,8 +287,6 @@ async def forzar_faltantes(
     destino: str = Form(""),
     modo_correo: str = Form("individual"),
     usar_drive: str = Form("false"),
-    drive_folder: str = Form(""),
-    excel_link: str = Form(""),
     resultados_previos: str = Form(...),
     excel: UploadFile | None = File(None),
     ctx: ActiveContext = Depends(require_permission("sunat.job.create")),
@@ -315,8 +308,6 @@ async def forzar_faltantes(
             destino=destino,
             modo_correo=modo_correo,
             usar_drive=_b(usar_drive),
-            drive_folder=drive_folder,
-            excel_link=excel_link,
             resultados_previos=resultados_previos,
             excel=excel,
         )

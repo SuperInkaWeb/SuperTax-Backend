@@ -1,9 +1,9 @@
 """
 Helpers de infraestructura de los jobs de descarga SUNAT.
 
-Resuelve el Excel de entrada (subida / caché de preview / Drive), persiste el
-resultado del job y refresca el token de Drive. La ejecución de los jobs vive en
-la cola sobre Postgres (`job_queue.py`) que consume un worker aparte.
+Resuelve el Excel de entrada (subida / caché de preview), persiste el resultado
+del job y refresca el token de Drive. La ejecución de los jobs vive en la cola
+sobre Postgres (`job_queue.py`) que consume un worker aparte.
 
 La automatización pesada (Playwright/Google) se importa de forma perezosa.
 """
@@ -123,32 +123,20 @@ def _guardar_resultado_job(
         db.close()
 
 
-async def excel_a_tmp(
-    excel: UploadFile | None,
-    excel_link: str,
-    drive_access: str,
-    drive_refresh: str,
-) -> str:
-    """Descarga o lee el Excel a un archivo temporal. Lanza ValueError si falla."""
-    if excel_link.strip():
-        from src.modules.sunat.infrastructure.automation.drive import descargar_excel
+async def excel_a_tmp(excel: UploadFile | None) -> str:
+    """Guarda el Excel subido en un archivo temporal. Lanza ValueError si falla.
 
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-        tmp.close()
-        try:
-            descargar_excel(excel_link.strip(), tmp.name, drive_access, drive_refresh)
-        except Exception as exc:
-            os.unlink(tmp.name)
-            raise ValueError(f"No se pudo descargar el Excel de Drive: {exc}")
-        return tmp.name
-    if excel:
-        if not (excel.filename or "").lower().endswith((".xlsx", ".xls", ".csv")):
-            raise ValueError("El archivo debe ser Excel (.xlsx/.xls) o CSV")
-        content = await excel.read()
-        if len(content) > MAX_EXCEL_BYTES:
-            raise ValueError("El archivo es demasiado grande (máximo 10 MB)")
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-        tmp.write(content)
-        tmp.close()
-        return tmp.name
-    raise ValueError("Debes subir un archivo Excel o proporcionar un enlace de Drive")
+    El Excel de Drive ya no se lee por enlace (scope acotado a `drive.file`): el
+    usuario lo elige con el Google Picker, que lo descarga en el navegador y lo
+    sube como un archivo normal por este mismo camino."""
+    if not excel:
+        raise ValueError("Debes subir un archivo Excel")
+    if not (excel.filename or "").lower().endswith((".xlsx", ".xls", ".csv")):
+        raise ValueError("El archivo debe ser Excel (.xlsx/.xls) o CSV")
+    content = await excel.read()
+    if len(content) > MAX_EXCEL_BYTES:
+        raise ValueError("El archivo es demasiado grande (máximo 10 MB)")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    tmp.write(content)
+    tmp.close()
+    return tmp.name
