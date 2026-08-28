@@ -61,9 +61,12 @@ Genera el Excel de resultados con openpyxl, en dos modos:
 
 Incluye una columna *Archivo* para rastrear el origen de cada fila.
 
-## Jobs
+## Jobs (ejecución on-demand)
 
-Igual patrón que el resto: encola en Postgres, lo procesa `workers/scanner_worker.py`
-(ver [architecture/async-jobs.md](../architecture/async-jobs.md)). La
-configuración del módulo (ej. ruta de Tesseract) vive en `infrastructure/config.py`
+La extracción corre en modo **on-demand**: el proceso `web` la ejecuta al subir el
+documento (`POST /upload/auto`), en un pool de hilos acotado por
+`SCANNER_MAX_CONCURRENCY` — sin un worker que sondee, para que Neon pueda
+suspenderse. `procesar_job` es síncrono (OCR/extracción). Detalle en
+[architecture/async-jobs.md](../architecture/async-jobs.md#ejecución-on-demand-todos-los-módulos).
+La configuración del módulo (ej. ruta de Tesseract) vive en `infrastructure/config.py`
 y en `SCANNER_TESSERACT_CMD`.

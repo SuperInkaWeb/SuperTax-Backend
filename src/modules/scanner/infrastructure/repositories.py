@@ -1,5 +1,5 @@
 """Repositorio SQLAlchemy del módulo Scanner (schema `scanner`)."""
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from src.modules.scanner.infrastructure.models import (
@@ -43,6 +43,44 @@ class SqlScannerJobRepository:
                 ScannerJobModel.company_id == company_id,
             )
         )
+
+    def claim(self, job_id: int) -> bool:
+        """Reclama el job de forma atómica (`en_cola` → `procesando`). True si este
+        proceso lo ganó; False si otro ya lo tomó o no está en cola. Evita el
+        doble-procesado (web on-demand y/o un worker de respaldo)."""
+        result = self._db.execute(
+            update(ScannerJobModel)
+            .where(
+                ScannerJobModel.id == job_id,
+                ScannerJobModel.status == ScannerJobStatus.en_cola,
+            )
+            .values(status=ScannerJobStatus.procesando)
+        )
+        self._db.commit()
+        return result.rowcount == 1
+
+    def ids_por_estado(self, status: ScannerJobStatus) -> list[int]:
+        return list(
+            self._db.scalars(
+                select(ScannerJobModel.id).where(ScannerJobModel.status == status)
+            ).all()
+        )
+
+    def marcar_estado_masivo(
+        self, de_estado: ScannerJobStatus, a_estado: ScannerJobStatus, mensaje: str | None = None
+    ) -> int:
+        """Cambia el estado de todos los jobs en `de_estado`. Si `mensaje`, lo pone
+        como `error_message`. Devuelve cuántos cambió."""
+        valores: dict = {"status": a_estado}
+        if mensaje is not None:
+            valores["error_message"] = mensaje[:500]
+        result = self._db.execute(
+            update(ScannerJobModel)
+            .where(ScannerJobModel.status == de_estado)
+            .values(**valores)
+        )
+        self._db.commit()
+        return result.rowcount
 
     def mark_completado(self, job_id: int, documento_id: int) -> None:
         job = self._db.get(ScannerJobModel, job_id)

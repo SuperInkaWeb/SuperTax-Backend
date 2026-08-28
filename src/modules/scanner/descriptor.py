@@ -1,5 +1,6 @@
 """Descriptor del módulo Scanner: contrato de auto-registro."""
 from src.modules.scanner.api.routes import router
+from src.modules.scanner.application.jobs import recuperar_pendientes
 from src.platform.modularity import ModuleDescriptor
 
 SCANNER_PERMISSIONS = (
@@ -13,4 +14,5 @@ descriptor = ModuleDescriptor(
     name="Escaneo de documentos",
     router=router,
     permissions=SCANNER_PERMISSIONS,
+    on_startup=recuperar_pendientes,
 )

@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # proceso web (on-demand). Cada una espera a SUNAT (~min, sin conexión a la BD)
     # y corre el motor en un subproceso efímero.
     SIRE_MAX_CONCURRENCY: int = 2
+    # Igual para el Scanner: cuántas extracciones OCR corren a la vez en el web
+    # (on-demand). El OCR es CPU-bound; ajústalo a los núcleos/RAM del web.
+    SCANNER_MAX_CONCURRENCY: int = 2
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""

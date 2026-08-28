@@ -57,7 +57,7 @@ crearla (`POST /jobs`) o reanudarla (`POST /jobs/{id}/resume`), en un pool de hi
 acotado por `SIRE_MAX_CONCURRENCY` — sin un worker que sondee, para que Neon pueda
 suspenderse. `procesar_job` es asíncrono y el motor corre en un subproceso efímero.
 Detalle y trade-offs en
-[architecture/async-jobs.md](../architecture/async-jobs.md#ejecución-on-demand-sunat-y-sire).
+[architecture/async-jobs.md](../architecture/async-jobs.md#ejecución-on-demand-todos-los-módulos).
 
 > **Diferencia respecto al original:** en la plataforma la sesión y la memoria de
 > proceso funcionan distinto a `sire-backend` (Neon + workers separados en lugar

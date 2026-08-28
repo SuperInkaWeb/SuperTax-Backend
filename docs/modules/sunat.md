@@ -76,7 +76,7 @@ SUNAT usa la cola sobre Postgres, pero en modo **on-demand**: la descarga se
 ejecuta **dentro del proceso `web`** al lanzarla (pool de hilos acotado por
 `SUNAT_MAX_CONCURRENCY`), sin un worker que sondee — así Neon puede suspenderse
 cuando no hay actividad. Detalle y trade-offs en
-[architecture/async-jobs.md](../architecture/async-jobs.md#ejecución-on-demand-sunat).
+[architecture/async-jobs.md](../architecture/async-jobs.md#ejecución-on-demand-todos-los-módulos).
 
 El `job_service` arma la config, resuelve el Excel (subido o caché de preview),
 encola y **despacha** la ejecución. Endpoints principales: `preview-excel`,

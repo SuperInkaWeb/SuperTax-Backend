@@ -44,7 +44,7 @@ async def upload_auto(
     'auto' = detección automática.
     """
     from src.modules.scanner.application.extraccion import ScannerExtractionError
-    from src.modules.scanner.application.jobs import encolar_documento
+    from src.modules.scanner.application.jobs import encolar_documento, encolar_ejecucion
     from src.modules.scanner.infrastructure.extractor.clasificador import ETIQUETAS
 
     tipo_forzado = tipo.strip()
@@ -61,6 +61,7 @@ async def upload_auto(
         )
     except ScannerExtractionError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    encolar_ejecucion(job.id)  # ejecución on-demand (sin worker que sondea)
     return ScannerJobCreated(job_id=job.id, status=job.status)
 
 

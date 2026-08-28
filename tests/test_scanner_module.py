@@ -207,3 +207,28 @@ def test_estado_job_encolado(db_session):
     body = resp.json()
     assert body["status"] == "en_cola"
     assert body["documento"] is None
+
+
+def test_claim_es_idempotente(db_session):
+    """El claim on-demand debe ser atómico: solo el primero gana el job
+    (en_cola→procesando); un segundo intento no lo re-procesa."""
+    from src.modules.scanner.infrastructure.models import ScannerJobModel, ScannerJobStatus
+    from src.modules.scanner.infrastructure.repositories import SqlScannerJobRepository
+
+    user, empresa = _escenario(db_session, role_key="operador")
+    job = ScannerJobModel(
+        company_id=empresa.id,
+        created_by_id=user.id,
+        nombre_archivo="x.pdf",
+        storage_path="scanner/uploads/x",
+        status=ScannerJobStatus.en_cola,
+    )
+    db_session.add(job)
+    db_session.flush()
+    repo = SqlScannerJobRepository(db_session)
+
+    assert repo.claim(job.id) is True   # lo gana
+    assert repo.claim(job.id) is False  # ya no está en cola
+
+    db_session.refresh(job)
+    assert job.status == ScannerJobStatus.procesando

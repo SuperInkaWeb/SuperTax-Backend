@@ -17,11 +17,17 @@ from src.modules.scanner.application.extraccion import (
     procesar_archivo,
     validar_subida,
 )
-from src.modules.scanner.infrastructure.models import ScannerJobModel
+from src.modules.scanner.infrastructure.models import ScannerJobModel, ScannerJobStatus
 from src.modules.scanner.infrastructure.repositories import SqlScannerJobRepository
+from src.platform.config.settings import settings
+from src.platform.database.session import SessionLocal
+from src.platform.storage import get_storage
 from src.platform.storage.base import FileStorage
+from src.platform.tasks import submit as submit_background
 
 logger = logging.getLogger("scanner.jobs")
+
+_POOL = "scanner"
 
 
 def encolar_documento(
@@ -80,3 +86,49 @@ def procesar_job(db: Session, storage: FileStorage, job_id: int) -> None:
             storage.delete(job.storage_path)
         except Exception:
             logger.warning("No se pudo borrar el archivo subido del job #%s", job_id)
+
+
+def _despachar(job_id: int) -> None:
+    """Corre dentro del pool: reclama el job y lo procesa. Si otro proceso ya lo
+    tomó (o ya no está en cola), no hace nada."""
+    db = SessionLocal()
+    try:
+        reclamado = SqlScannerJobRepository(db).claim(job_id)
+    finally:
+        db.close()
+    if not reclamado:
+        return
+    db = SessionLocal()
+    try:
+        procesar_job(db, get_storage(), job_id)
+    finally:
+        db.close()
+
+
+def encolar_ejecucion(job_id: int) -> None:
+    """Despacha la extracción al pool on-demand del proceso web (sin worker que
+    sondea). La concurrencia la limita `SCANNER_MAX_CONCURRENCY`."""
+    submit_background(_POOL, settings.SCANNER_MAX_CONCURRENCY, _despachar, job_id)
+
+
+def recuperar_pendientes() -> None:
+    """Al arrancar el web (una sola instancia asumida): marca `error` los jobs que
+    quedaron en `procesando` (interrumpidos por un redeploy) y re-despacha los que
+    quedaron `en_cola`."""
+    db = SessionLocal()
+    try:
+        repo = SqlScannerJobRepository(db)
+        interrumpidos = repo.marcar_estado_masivo(
+            ScannerJobStatus.procesando,
+            ScannerJobStatus.error,
+            mensaje="El proceso se interrumpió (reinicio del servidor). Vuelve a intentarlo.",
+        )
+        pendientes = repo.ids_por_estado(ScannerJobStatus.en_cola)
+    finally:
+        db.close()
+    if interrumpidos:
+        logger.warning("Scanner: %s job(s) interrumpidos marcados como error", interrumpidos)
+    for job_id in pendientes:
+        encolar_ejecucion(job_id)
+    if pendientes:
+        logger.info("Scanner: re-despachados %s job(s) que estaban en cola", len(pendientes))

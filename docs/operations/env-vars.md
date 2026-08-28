@@ -49,6 +49,7 @@ Fuente única: [`src/platform/config/settings.py`](../../src/platform/config/set
 | `SUNAT_POLL_TIMEOUT_MINUTES` | `90` | |
 | `SUNAT_MAX_CONCURRENCY` | `2` | descargas SUNAT en paralelo (on-demand en el `web`); cada una levanta Chromium |
 | `SIRE_MAX_CONCURRENCY` | `2` | conciliaciones SIRE en paralelo (on-demand en el `web`) |
+| `SCANNER_MAX_CONCURRENCY` | `2` | extracciones OCR en paralelo (on-demand en el `web`); CPU-bound |
 | `DESCARGAS_DIR` | vacío (temp del SO) | dir de descargas del worker |
 | `GOOGLE_CLIENT_ID` | vacío | Drive: subida (OAuth backend) |
 | `GOOGLE_CLIENT_SECRET` | vacío | **secreto**; Drive subida |
