@@ -2,8 +2,20 @@
 
 Las tres automatizaciones son **largas** (minutos): Playwright navegando SUNAT,
 OCR de PDFs escaneados, conciliación de miles de filas. No pueden correr dentro
-del request HTTP. La plataforma usa una **cola sobre Postgres** consumida por
-**procesos worker separados** — sin Redis/Celery.
+del request HTTP. La plataforma usa una **cola sobre Postgres** con el estado, los
+logs y el resultado de cada job.
+
+Hay **dos modelos de ejecución** de esa cola:
+
+- **On-demand (SUNAT):** el propio proceso `web` ejecuta el job al lanzarlo, en un
+  pool de hilos acotado. No hay proceso que sondee → cuando no hay trabajos, no hay
+  actividad contra la base (Neon puede suspenderse). Ver [§ On-demand](#ejecución-on-demand-sunat).
+- **Worker que sondea (SIRE, Scanner):** un proceso worker separado consulta la
+  cola cada pocos segundos y procesa. Más aislado, pero mantiene la base activa.
+
+> Ambos usan la misma tabla de jobs y el mismo `procesar_job`; solo cambia **quién
+> lo dispara**. SUNAT se migró al modelo on-demand para no consumir horas de cómputo
+> en Neon estando inactivo.
 
 ## Por qué Postgres y no una cola dedicada
 
@@ -77,6 +89,37 @@ Al arrancar, el worker marca como `error` los jobs que quedaron en `procesando`
 temporal del job y el insumo en storage, y persiste el estado final. Un fallo de
 un job **nunca** tumba al worker (el bucle captura, registra y sigue).
 
+## Ejecución on-demand (SUNAT)
+
+SUNAT no usa un worker que sondea, sino que ejecuta el job **dentro del proceso
+`web`** en el momento en que el usuario lo lanza. Objetivo: no mantener a Neon
+despierto con un sondeo 24/7 (ahorro de horas de cómputo en el plan gratuito).
+
+```
+POST /iniciar
+  encolar_job            → INSERT status=en_cola, insumo a storage
+  encolar_ejecucion      → submit(_despachar) a un pool de hilos acotado
+                              _despachar: claim(en_cola→procesando) → procesar_job
+```
+
+Piezas (`platform/tasks/executor.py` + `modules/sunat/infrastructure/job_queue.py`):
+
+- **Pool acotado por nombre**: `ThreadPoolExecutor(max_workers=SUNAT_MAX_CONCURRENCY)`.
+  N descargas en paralelo; las que excedan esperan turno (solo hay "cola" bajo
+  carga real). Cada una levanta Chromium, así que el tope se ajusta a la RAM del
+  `web`. El ejecutor es genérico y no depende de los módulos.
+- **Claim atómico** (`SqlSunatJobRepository.claim`): `UPDATE … SET procesando
+  WHERE job_id=? AND status=en_cola`. Solo un proceso gana el job → evita el
+  doble-procesado (incluso si además corre un worker de respaldo).
+- **Recuperación al arranque** (`recuperar_pendientes`, vía `ModuleDescriptor.on_startup`
+  + `lifespan` de FastAPI): marca `error` los `procesando` interrumpidos por un
+  redeploy y **re-despacha** los `en_cola` que quedaron sin procesar. Asume una
+  sola instancia `web` (misma suposición que el worker original).
+
+**Trade-off:** más simple y barato (sin polling), pero si el `web` se reinicia a
+mitad de un job, ese job se corta y se marca `error` (reintentable). Con un worker
+dedicado el job estaría aislado del ciclo del `web`.
+
 ## Despliegue
 
 Web y workers comparten **la misma imagen Docker** pero se corren como servicios
@@ -84,10 +127,13 @@ distintos (ver [operations/deploy.md](../operations/deploy.md)):
 
 ```
 web            → uvicorn src.main:app         (comando por defecto)
-worker-sunat   → python -m workers.sunat_worker
+                 · procesa las descargas SUNAT on-demand (no necesita worker)
 worker-sire    → python -m workers.sire_worker
 worker-scanner → python -m workers.scanner_worker
 ```
 
-> Los workers son **obligatorios**: sin el worker de un módulo, sus jobs se
-> quedan `en_cola` para siempre.
+- **SUNAT ya no necesita `worker-sunat`**: escala ese servicio a **0 réplicas**
+  (su código sigue existiendo y es seguro por el claim, pero es redundante).
+- **SIRE y Scanner** siguen siendo workers que sondean y **son obligatorios**: sin
+  el worker de ese módulo, sus jobs se quedan `en_cola`. (Pendiente migrarlos al
+  modelo on-demand.)

@@ -58,9 +58,12 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = _DEFAULT_DEV_ENCRYPTION_KEY
 
     # ─── Jobs / SUNAT ───
-    # La concurrencia la determina cuántos procesos worker se corren (cola con
-    # FOR UPDATE SKIP LOCKED), no un número aquí.
     SUNAT_POLL_TIMEOUT_MINUTES: int = 90
+    # Modelo on-demand: la descarga se ejecuta dentro del proceso web en un pool
+    # de hilos acotado (no un worker que sondea 24/7). Este número es cuántas
+    # descargas SUNAT pueden correr en paralelo; las que excedan esperan turno.
+    # Cada una levanta Chromium (Playwright), así que súbelo según la RAM del web.
+    SUNAT_MAX_CONCURRENCY: int = 2
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""

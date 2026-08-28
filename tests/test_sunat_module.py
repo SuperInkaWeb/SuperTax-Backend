@@ -214,6 +214,35 @@ def test_iniciar_encola_job_cifrando_config(db_session):
     assert "claveSOL" not in job.config_enc  # la config va cifrada
 
 
+def test_claim_es_idempotente(db_session):
+    """El claim on-demand debe ser atómico: solo el primero gana el job
+    (en_cola→procesando); un segundo intento no re-procesa (evita doble ejecución)."""
+    from src.modules.sunat.infrastructure.models import SunatJobModel, SunatJobStatus
+    from src.modules.sunat.infrastructure.repositories import SqlSunatJobRepository
+
+    user, empresa = _escenario(db_session, role_key="operador")
+    db_session.add(
+        SunatJobModel(
+            job_id="job-claim",
+            company_id=empresa.id,
+            created_by_id=user.id,
+            status=SunatJobStatus.en_cola,
+            config_enc="x",
+            excel_path="sunat/uploads/x.xlsx",
+        )
+    )
+    db_session.flush()
+    repo = SqlSunatJobRepository(db_session)
+
+    assert repo.claim("job-claim") is True   # lo gana
+    assert repo.claim("job-claim") is False  # ya no está en cola
+
+    job = db_session.scalar(
+        select(SunatJobModel).where(SunatJobModel.job_id == "job-claim")
+    )
+    assert job.status == SunatJobStatus.procesando
+
+
 def test_cancelar_marca_cancel_requested(db_session):
     from src.modules.sunat.infrastructure.models import SunatJobModel
 

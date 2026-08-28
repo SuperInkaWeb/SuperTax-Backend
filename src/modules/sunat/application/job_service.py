@@ -142,7 +142,9 @@ async def iniciar(
         "descargar_xml": descargar_xml,
         "comprobantes_seleccionados": comprobantes_seleccionados,
     }
-    return job_queue.encolar_job(db, storage, company_id, user_id, config, excel_path)
+    job_id = job_queue.encolar_job(db, storage, company_id, user_id, config, excel_path)
+    job_queue.encolar_ejecucion(job_id)  # ejecución on-demand (sin worker que sondea)
+    return job_id
 
 
 async def forzar_faltantes(
@@ -195,7 +197,9 @@ async def forzar_faltantes(
         "drive_refresh_token": drive_refresh,
         "solo_faltantes": solo_faltantes,
     }
-    return job_queue.encolar_job(db, storage, company_id, user_id, config, excel_path)
+    job_id = job_queue.encolar_job(db, storage, company_id, user_id, config, excel_path)
+    job_queue.encolar_ejecucion(job_id)  # ejecución on-demand (sin worker que sondea)
+    return job_id
 
 
 async def previsualizar(

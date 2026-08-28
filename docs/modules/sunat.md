@@ -70,13 +70,18 @@ La clave SOL se puede guardar por empresa **cifrada (Fernet)** o pasarse en el
 formulario. Nunca se registra en logs. El worker la descifra solo en memoria para
 el login.
 
-## Jobs
+## Jobs (ejecución on-demand)
 
-SUNAT usa la cola sobre Postgres descrita en
-[architecture/async-jobs.md](../architecture/async-jobs.md). El `job_service`
-arma la config, resuelve el Excel (subido o caché de preview) y encola. Endpoints
-principales: `preview-excel`, `iniciar`, `forzar-faltantes` (reintenta solo los
-`Parcial`/`Error`), `cancelar`, logs SSE.
+SUNAT usa la cola sobre Postgres, pero en modo **on-demand**: la descarga se
+ejecuta **dentro del proceso `web`** al lanzarla (pool de hilos acotado por
+`SUNAT_MAX_CONCURRENCY`), sin un worker que sondee — así Neon puede suspenderse
+cuando no hay actividad. Detalle y trade-offs en
+[architecture/async-jobs.md](../architecture/async-jobs.md#ejecución-on-demand-sunat).
+
+El `job_service` arma la config, resuelve el Excel (subido o caché de preview),
+encola y **despacha** la ejecución. Endpoints principales: `preview-excel`,
+`iniciar`, `forzar-faltantes` (reintenta solo los `Parcial`/`Error`), `cancelar`,
+logs SSE.
 
 ## Reporte
 

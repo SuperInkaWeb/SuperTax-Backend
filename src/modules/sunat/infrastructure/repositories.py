@@ -1,5 +1,5 @@
 """Repositorios SQLAlchemy del módulo SUNAT (schema `sunat`)."""
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from src.modules.sunat.domain.entities import JobResult
@@ -66,6 +66,41 @@ class SqlSunatJobRepository:
                 .offset(offset)
             ).all()
         )
+
+    def claim(self, job_id: str) -> bool:
+        """Reclama el job de forma atómica (`en_cola` → `procesando`). Devuelve
+        True si este proceso ganó el job; False si otro ya lo tomó o no está en
+        cola. El guard por estado evita el doble-procesado (web on-demand y/o un
+        worker de respaldo)."""
+        result = self._db.execute(
+            update(SunatJobModel)
+            .where(
+                SunatJobModel.job_id == job_id,
+                SunatJobModel.status == SunatJobStatus.en_cola,
+            )
+            .values(status=SunatJobStatus.procesando)
+        )
+        self._db.commit()
+        return result.rowcount == 1
+
+    def ids_por_estado(self, status: SunatJobStatus) -> list[str]:
+        return list(
+            self._db.scalars(
+                select(SunatJobModel.job_id).where(SunatJobModel.status == status)
+            ).all()
+        )
+
+    def marcar_estado_masivo(
+        self, de_estado: SunatJobStatus, a_estado: SunatJobStatus
+    ) -> int:
+        """Cambia el estado de todos los jobs en `de_estado`. Devuelve cuántos."""
+        result = self._db.execute(
+            update(SunatJobModel)
+            .where(SunatJobModel.status == de_estado)
+            .values(status=a_estado)
+        )
+        self._db.commit()
+        return result.rowcount
 
     def set_status(self, job_id: str, status: SunatJobStatus) -> None:
         job = self.get(job_id)

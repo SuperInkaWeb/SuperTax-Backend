@@ -9,6 +9,10 @@ Compone la aplicación en orden:
 
 Cada módulo se monta bajo `/api/<key>` de forma automática.
 """
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from src.module_registry import MODULES
@@ -38,8 +42,25 @@ _CORE_ROUTERS = (
 )
 
 
+_log = logging.getLogger("platform.startup")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Al arrancar, deja que cada módulo recupere su estado (jobs interrumpidos /
+    encolados). Un fallo aquí no debe impedir que la API sirva salud/tráfico."""
+    for module in MODULES:
+        if module.on_startup is None:
+            continue
+        try:
+            module.on_startup()
+        except Exception:
+            _log.exception("on_startup del módulo '%s' falló", module.key)
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
+    app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG, lifespan=_lifespan)
 
     register_middleware(app)
     register_error_handlers(app)
