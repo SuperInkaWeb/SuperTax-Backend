@@ -1,7 +1,7 @@
 """Repositorios SQLAlchemy del módulo SIRE (schema `sire`)."""
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from src.modules.sire.domain.entities import (
@@ -147,6 +147,46 @@ class SqlReconciliationRepository:
         row.error_message = None
         self._db.commit()
         return self._to_entity(row)
+
+    def claim(self, job_id: int) -> bool:
+        """Reclama el job de forma atómica (`en_cola` → `procesando`). True si este
+        proceso lo ganó; False si otro ya lo tomó o no está en cola. Evita el
+        doble-procesado (web on-demand y/o un worker de respaldo)."""
+        result = self._db.execute(
+            update(ReconciliationJobModel)
+            .where(
+                ReconciliationJobModel.id == job_id,
+                ReconciliationJobModel.status == JobStatus.en_cola,
+            )
+            .values(status=JobStatus.procesando)
+        )
+        self._db.commit()
+        return result.rowcount == 1
+
+    def ids_por_estado(self, status: JobStatus) -> list[int]:
+        return list(
+            self._db.scalars(
+                select(ReconciliationJobModel.id).where(
+                    ReconciliationJobModel.status == status
+                )
+            ).all()
+        )
+
+    def marcar_estado_masivo(
+        self, de_estado: JobStatus, a_estado: JobStatus, mensaje: str | None = None
+    ) -> int:
+        """Cambia el estado de todos los jobs en `de_estado`. Si `mensaje`, lo pone
+        como `error_message`. Devuelve cuántos cambió."""
+        valores: dict = {"status": a_estado}
+        if mensaje is not None:
+            valores["error_message"] = mensaje[:1000]
+        result = self._db.execute(
+            update(ReconciliationJobModel)
+            .where(ReconciliationJobModel.status == de_estado)
+            .values(**valores)
+        )
+        self._db.commit()
+        return result.rowcount
 
     def mark_error(self, job_id: int, message: str) -> None:
         row = self._db.get(ReconciliationJobModel, job_id)

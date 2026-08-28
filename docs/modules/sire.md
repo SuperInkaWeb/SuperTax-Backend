@@ -52,10 +52,12 @@ infrastructure/ parser/                   → lee archivos de la empresa y la pr
 
 ## Jobs, sesiones y Neon
 
-Igual que SUNAT/Scanner, la conciliación corre en un **worker** sobre la cola de
-Postgres (ver [architecture/async-jobs.md](../architecture/async-jobs.md)). El
-orquestador y el worker alimentan el motor original con adaptadores de
-logs/progreso/cancelación, sin modificarlo.
+La conciliación corre en modo **on-demand**: el proceso `web` la ejecuta al
+crearla (`POST /jobs`) o reanudarla (`POST /jobs/{id}/resume`), en un pool de hilos
+acotado por `SIRE_MAX_CONCURRENCY` — sin un worker que sondee, para que Neon pueda
+suspenderse. `procesar_job` es asíncrono y el motor corre en un subproceso efímero.
+Detalle y trade-offs en
+[architecture/async-jobs.md](../architecture/async-jobs.md#ejecución-on-demand-sunat-y-sire).
 
 > **Diferencia respecto al original:** en la plataforma la sesión y la memoria de
 > proceso funcionan distinto a `sire-backend` (Neon + workers separados en lugar

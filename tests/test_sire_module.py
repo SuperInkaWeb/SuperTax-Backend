@@ -108,3 +108,28 @@ def test_job_de_otra_empresa_no_es_accesible(db_session):
     )
     resp = _get(db_session, user, empresa_a.id, f"/api/sire/jobs/{job_b.id}")
     assert resp.status_code == 404
+
+
+def test_claim_es_idempotente(db_session):
+    """El claim on-demand debe ser atómico: solo el primero gana el job
+    (en_cola→procesando); un segundo intento no lo re-procesa."""
+    from src.modules.sire.infrastructure.repositories import SqlReconciliationRepository
+
+    user, empresa_a = _escenario(db_session, role_key="operador")
+    job = ReconciliationJobModel(
+        company_id=empresa_a.id,
+        created_by_id=user.id,
+        periodo="202603",
+        tipo_libro=TipoLibro.compras,
+        status=JobStatus.en_cola,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    db_session.flush()
+    repo = SqlReconciliationRepository(db_session)
+
+    assert repo.claim(job.id) is True   # lo gana
+    assert repo.claim(job.id) is False  # ya no está en cola
+
+    db_session.refresh(job)
+    assert job.status == JobStatus.procesando

@@ -7,15 +7,16 @@ logs y el resultado de cada job.
 
 Hay **dos modelos de ejecución** de esa cola:
 
-- **On-demand (SUNAT):** el propio proceso `web` ejecuta el job al lanzarlo, en un
-  pool de hilos acotado. No hay proceso que sondee → cuando no hay trabajos, no hay
-  actividad contra la base (Neon puede suspenderse). Ver [§ On-demand](#ejecución-on-demand-sunat).
-- **Worker que sondea (SIRE, Scanner):** un proceso worker separado consulta la
-  cola cada pocos segundos y procesa. Más aislado, pero mantiene la base activa.
+- **On-demand (SUNAT, SIRE):** el propio proceso `web` ejecuta el job al lanzarlo,
+  en un pool de hilos acotado. No hay proceso que sondee → cuando no hay trabajos,
+  no hay actividad contra la base (Neon puede suspenderse). Ver
+  [§ On-demand](#ejecución-on-demand-sunat-y-sire).
+- **Worker que sondea (Scanner):** un proceso worker separado consulta la cola cada
+  pocos segundos y procesa. Más aislado, pero mantiene la base activa.
 
 > Ambos usan la misma tabla de jobs y el mismo `procesar_job`; solo cambia **quién
-> lo dispara**. SUNAT se migró al modelo on-demand para no consumir horas de cómputo
-> en Neon estando inactivo.
+> lo dispara**. SUNAT y SIRE se migraron al modelo on-demand para no consumir horas
+> de cómputo en Neon estando inactivos.
 
 ## Por qué Postgres y no una cola dedicada
 
@@ -89,11 +90,11 @@ Al arrancar, el worker marca como `error` los jobs que quedaron en `procesando`
 temporal del job y el insumo en storage, y persiste el estado final. Un fallo de
 un job **nunca** tumba al worker (el bucle captura, registra y sigue).
 
-## Ejecución on-demand (SUNAT)
+## Ejecución on-demand (SUNAT y SIRE)
 
-SUNAT no usa un worker que sondea, sino que ejecuta el job **dentro del proceso
-`web`** en el momento en que el usuario lo lanza. Objetivo: no mantener a Neon
-despierto con un sondeo 24/7 (ahorro de horas de cómputo en el plan gratuito).
+SUNAT y SIRE no usan un worker que sondea, sino que ejecutan el job **dentro del
+proceso `web`** en el momento en que el usuario lo lanza. Objetivo: no mantener a
+Neon despierto con un sondeo 24/7 (ahorro de horas de cómputo en el plan gratuito).
 
 ```
 POST /iniciar
@@ -102,19 +103,29 @@ POST /iniciar
                               _despachar: claim(en_cola→procesando) → procesar_job
 ```
 
-Piezas (`platform/tasks/executor.py` + `modules/sunat/infrastructure/job_queue.py`):
+Piezas comunes en `platform/tasks/executor.py`; la parte por módulo vive en
+`modules/sunat/infrastructure/job_queue.py` y `modules/sire/infrastructure/reconciliation/dispatch.py`:
 
-- **Pool acotado por nombre**: `ThreadPoolExecutor(max_workers=SUNAT_MAX_CONCURRENCY)`.
-  N descargas en paralelo; las que excedan esperan turno (solo hay "cola" bajo
-  carga real). Cada una levanta Chromium, así que el tope se ajusta a la RAM del
-  `web`. El ejecutor es genérico y no depende de los módulos.
-- **Claim atómico** (`SqlSunatJobRepository.claim`): `UPDATE … SET procesando
-  WHERE job_id=? AND status=en_cola`. Solo un proceso gana el job → evita el
-  doble-procesado (incluso si además corre un worker de respaldo).
+- **Pool acotado por nombre**: `ThreadPoolExecutor(max_workers=<MÓDULO>_MAX_CONCURRENCY)`.
+  N jobs en paralelo; los que excedan esperan turno (solo hay "cola" bajo carga
+  real). El ejecutor es genérico y no depende de los módulos.
+- **Claim atómico** (`repo.claim`): `UPDATE … SET procesando WHERE id=? AND
+  status=en_cola`. Solo un proceso gana el job → evita el doble-procesado (incluso
+  si además corre un worker de respaldo).
 - **Recuperación al arranque** (`recuperar_pendientes`, vía `ModuleDescriptor.on_startup`
   + `lifespan` de FastAPI): marca `error` los `procesando` interrumpidos por un
   redeploy y **re-despacha** los `en_cola` que quedaron sin procesar. Asume una
   sola instancia `web` (misma suposición que el worker original).
+
+Diferencias por módulo:
+
+- **SUNAT**: `procesar_job` es síncrono; cada job levanta Chromium (Playwright), así
+  que `SUNAT_MAX_CONCURRENCY` se ajusta a la RAM del `web`.
+- **SIRE**: `procesar_job` es **async** (el pool corre `asyncio.run` en su hilo) y el
+  motor de conciliación se ejecuta en un **subproceso efímero** (spawn). El job
+  espera a SUNAT (~min) **sin** mantener conexión a la BD, así que gasta poca RAM
+  salvo en el burst del motor. Se despacha al crear (`POST /jobs`) y al reanudar
+  (`POST /jobs/{id}/resume`).
 
 **Trade-off:** más simple y barato (sin polling), pero si el `web` se reinicia a
 mitad de un job, ese job se corta y se marca `error` (reintentable). Con un worker
@@ -127,13 +138,13 @@ distintos (ver [operations/deploy.md](../operations/deploy.md)):
 
 ```
 web            → uvicorn src.main:app         (comando por defecto)
-                 · procesa las descargas SUNAT on-demand (no necesita worker)
-worker-sire    → python -m workers.sire_worker
+                 · procesa SUNAT y SIRE on-demand (no necesitan worker)
 worker-scanner → python -m workers.scanner_worker
 ```
 
-- **SUNAT ya no necesita `worker-sunat`**: escala ese servicio a **0 réplicas**
-  (su código sigue existiendo y es seguro por el claim, pero es redundante).
-- **SIRE y Scanner** siguen siendo workers que sondean y **son obligatorios**: sin
-  el worker de ese módulo, sus jobs se quedan `en_cola`. (Pendiente migrarlos al
-  modelo on-demand.)
+- **SUNAT y SIRE ya no necesitan su worker**: escala `worker-sunat` y `worker-sire`
+  a **0 réplicas** (su código sigue existiendo y es seguro por el claim, pero son
+  redundantes).
+- **Scanner** sigue siendo un worker que sondea y **es obligatorio**: sin
+  `worker-scanner`, sus jobs se quedan `en_cola`. (Pendiente migrarlo al modelo
+  on-demand.)

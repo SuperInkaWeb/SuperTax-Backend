@@ -5,6 +5,7 @@ Descriptor del módulo SIRE: su contrato de auto-registro.
 sus permisos al seed. Agregar un endpoint o permiso aquí no toca el núcleo.
 """
 from src.modules.sire.api.routes import router
+from src.modules.sire.infrastructure.reconciliation.dispatch import recuperar_pendientes
 from src.platform.modularity import ModuleDescriptor
 
 SIRE_PERMISSIONS = (
@@ -20,4 +21,5 @@ descriptor = ModuleDescriptor(
     name="Automatización SIRE",
     router=router,
     permissions=SIRE_PERMISSIONS,
+    on_startup=recuperar_pendientes,
 )

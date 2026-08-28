@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # descargas SUNAT pueden correr en paralelo; las que excedan esperan turno.
     # Cada una levanta Chromium (Playwright), así que súbelo según la RAM del web.
     SUNAT_MAX_CONCURRENCY: int = 2
+    # Igual que SUNAT pero para SIRE: cuántas conciliaciones corren a la vez en el
+    # proceso web (on-demand). Cada una espera a SUNAT (~min, sin conexión a la BD)
+    # y corre el motor en un subproceso efímero.
+    SIRE_MAX_CONCURRENCY: int = 2
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""

@@ -36,6 +36,7 @@ from src.modules.sire.application.use_cases import (
     list_reconciliation_jobs,
 )
 from src.modules.sire.domain.entities import TipoLibro
+from src.modules.sire.infrastructure.reconciliation.dispatch import encolar_ejecucion
 from src.modules.sire.infrastructure.reconciliation.orchestrator import (
     consultar_propuesta_disponible,
 )
@@ -145,6 +146,7 @@ async def create_job(
     if guardar_formato and mapeo_config and mapeo_config.get("columnas"):
         SqlFileMappingRepository(db).save(ctx.company.id, tipo_libro.value, mapeo_config)
 
+    encolar_ejecucion(job.id)  # ejecución on-demand (sin worker que sondea)
     return JobResponse.model_validate(job)
 
 
@@ -173,6 +175,7 @@ def resume_job(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conciliación no encontrada")
+    encolar_ejecucion(job.id)  # ejecución on-demand (sin worker que sondea)
     return JobResponse.model_validate(job)
 
 
