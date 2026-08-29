@@ -202,22 +202,22 @@ class SqlDriveTokenRepository:
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def get(self, company_id: int) -> DriveTokenModel | None:
+    def get(self, user_id: int) -> DriveTokenModel | None:
         return self._db.scalar(
-            select(DriveTokenModel).where(DriveTokenModel.company_id == company_id)
+            select(DriveTokenModel).where(DriveTokenModel.user_id == user_id)
         )
 
-    def upsert(self, company_id: int, access_enc: str, refresh_enc: str) -> None:
-        token = self.get(company_id)
+    def upsert(self, user_id: int, access_enc: str, refresh_enc: str) -> None:
+        token = self.get(user_id)
         if token is None:
-            token = DriveTokenModel(company_id=company_id)
+            token = DriveTokenModel(user_id=user_id)
             self._db.add(token)
         token.access_token_enc = access_enc
         token.refresh_token_enc = refresh_enc
         self._db.commit()
 
-    def delete(self, company_id: int) -> None:
-        token = self.get(company_id)
+    def delete(self, user_id: int) -> None:
+        token = self.get(user_id)
         if token is not None:
             self._db.delete(token)
             self._db.commit()

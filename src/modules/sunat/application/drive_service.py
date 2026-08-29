@@ -38,11 +38,12 @@ def _firmar_state(company_id: int, user_id: int) -> str:
 
 
 def _leer_state(state: str) -> int:
+    """Devuelve el user_id que inició la conexión (el Drive es por usuario)."""
     try:
         data = json.loads(decrypt_field(state))
     except (InvalidToken, ValueError, TypeError):
         raise DriveError("Estado inválido")
-    return int(data["c"])
+    return int(data["u"])
 
 
 def url_autorizacion(company_id: int, user_id: int) -> str:
@@ -78,8 +79,8 @@ def _intercambiar_code(code: str) -> dict:
 
 
 def procesar_callback(db: Session, code: str, state: str) -> None:
-    """Valida el state, intercambia el code y guarda los tokens cifrados."""
-    company_id = _leer_state(state)
+    """Valida el state, intercambia el code y guarda los tokens cifrados del usuario."""
+    user_id = _leer_state(state)
     try:
         token_data = _intercambiar_code(code)
     except urllib.error.URLError:
@@ -87,11 +88,11 @@ def procesar_callback(db: Session, code: str, state: str) -> None:
         raise DriveError("Error al conectar con Google Drive")
 
     SqlDriveTokenRepository(db).upsert(
-        company_id,
+        user_id,
         access_enc=encrypt_field(token_data.get("access_token", "")),
         refresh_enc=encrypt_field(token_data.get("refresh_token", "")),
     )
 
 
-def desconectar(db: Session, company_id: int) -> None:
-    SqlDriveTokenRepository(db).delete(company_id)
+def desconectar(db: Session, user_id: int) -> None:
+    SqlDriveTokenRepository(db).delete(user_id)

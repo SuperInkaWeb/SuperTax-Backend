@@ -33,7 +33,7 @@ Definiciones en `src/platform/*/models.py`. Todos los modelos se registran en
 - **`sunat`** (`modules/sunat/infrastructure/models.py`): `SunatJobModel` (estado,
   config cifrada, ruta del insumo, `cancel_requested`), `SunatJobLogModel`
   (logs/progreso), resultados, credenciales SOL cifradas, `DriveTokenModel`
-  (tokens de Drive cifrados por empresa).
+  (tokens de Drive cifrados **por usuario** — `user_id` único).
 - **`sire`** (`modules/sire/infrastructure/models.py`): jobs de conciliación,
   resultados, credenciales, sesiones.
 - **`scanner`** (`modules/scanner/infrastructure/models.py`): documentos y jobs de

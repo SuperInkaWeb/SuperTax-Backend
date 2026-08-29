@@ -87,14 +87,17 @@ class SunatCredentialsModel(Base):
 
 
 class DriveTokenModel(Base):
-    """Token OAuth de Google Drive de la empresa (destino de las descargas)."""
+    """Token OAuth de Google Drive del usuario (destino de SUS descargas).
+
+    Es por usuario, no por empresa: cada usuario conecta su propio Drive una vez y
+    sus descargas suben ahí (organizadas en carpetas `SuperTax {RUC}`)."""
 
     __tablename__ = "drive_tokens"
     __table_args__ = {"schema": "sunat"}
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    company_id: Mapped[int] = mapped_column(
-        ForeignKey("core.companies.id", ondelete="CASCADE"), unique=True
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("core.users.id", ondelete="CASCADE"), unique=True
     )
     access_token_enc: Mapped[str] = mapped_column(Text, default="")
     refresh_token_enc: Mapped[str] = mapped_column(Text, default="")

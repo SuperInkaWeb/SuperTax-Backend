@@ -7,10 +7,15 @@ opuestas. No son redundantes: cubren *salida* y *entrada*.
 |---|---|---|
 | **Para qué** | **subir** los resultados (PDF/XML) | **elegir** el Excel de entrada |
 | **Dirección** | app → Drive (salida) | Drive → app (entrada) |
-| **Quién** | el worker, en segundo plano | el usuario, en el navegador |
-| **Token** | persistente (refresh, cifrado por empresa) | efímero, en el navegador, por archivo |
+| **Quién** | el `web`, al procesar el job del usuario | el usuario, en el navegador |
+| **Token** | persistente (refresh, cifrado **por usuario**) | efímero, en el navegador, por archivo |
 | **Frecuencia** | una vez | cada vez que elige un archivo |
 | **Dónde vive** | backend (`drive_service` + `automation/drive.py`) | frontend (Picker GIS) |
+
+> **Por usuario, no por empresa.** Cada usuario conecta **su propio** Google Drive
+> (una vez); las descargas que **él** lanza suben a **su** Drive, en carpetas
+> `SuperTax {RUC}`. El token se guarda con `user_id` (ver `DriveTokenModel`), y el
+> job usa el token de **su creador** (`created_by_id`).
 
 ## Scope acotado: `drive.file`
 
@@ -30,10 +35,11 @@ amplio `drive`. Ventajas (ver
    de autorización de Google (popup).
 2. Google redirige a `/api/sunat/drive/callback` con un `code`. El `state` es un
    token **Fernet** con empresa+usuario: sirve de protección **CSRF** y de vínculo
-   con la empresa activa (el callback no lleva token Auth0).
+   con el **usuario** que inició la conexión (el callback no lleva token Auth0).
 3. Se intercambia el `code` por tokens (`access` + `refresh`) y se guardan
-   **cifrados** por empresa (`DriveTokenModel`).
-4. En un job con "Subir a Google Drive", el worker crea un `DriveClient` que:
+   **cifrados** por usuario (`DriveTokenModel.user_id`).
+4. En un job con "Subir a Google Drive", el `web` crea un `DriveClient` con el token
+   del **creador del job** que:
    - asegura una **carpeta propia de la app** (`SuperTax {ruc}`) — con `drive.file`,
      `list` solo devuelve lo que la app creó, sin colisión con carpetas homónimas;
    - sube cada PDF/XML a esa carpeta;

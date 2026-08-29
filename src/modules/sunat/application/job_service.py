@@ -88,8 +88,8 @@ def _resolver_login(
     return saved
 
 
-def _drive_tokens(db: Session, company_id: int) -> tuple[str, str]:
-    token = SqlDriveTokenRepository(db).get(company_id)
+def _drive_tokens(db: Session, user_id: int) -> tuple[str, str]:
+    token = SqlDriveTokenRepository(db).get(user_id)
     if token is None:
         return "", ""
     access = decrypt_field(token.access_token_enc) if token.access_token_enc else ""
@@ -124,7 +124,7 @@ async def iniciar(
         raise SunatJobError("El correo de destino no tiene un formato válido")
 
     ruc, usuario, clave = _resolver_login(db, company_id, ruc, usuario, clave)
-    drive_access, drive_refresh = _drive_tokens(db, company_id)
+    drive_access, drive_refresh = _drive_tokens(db, user_id)
     excel_path = await _resolver_excel(preview_id, excel)
     config = {
         "ruc": ruc,
@@ -176,7 +176,7 @@ async def forzar_faltantes(
     if not solo_faltantes:
         raise SunatJobError("No hay comprobantes faltantes para reintentar")
 
-    drive_access, drive_refresh = _drive_tokens(db, company_id)
+    drive_access, drive_refresh = _drive_tokens(db, user_id)
     try:
         ruta = await runner.excel_a_tmp(excel)
     except ValueError as exc:

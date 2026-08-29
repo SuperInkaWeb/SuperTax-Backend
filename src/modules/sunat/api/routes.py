@@ -155,7 +155,7 @@ def drive_status(
     ctx: ActiveContext = Depends(require_permission("sunat.drive.manage")),
     db: Session = Depends(get_db),
 ) -> DriveStatusResponse:
-    token = SqlDriveTokenRepository(db).get(ctx.company.id)
+    token = SqlDriveTokenRepository(db).get(ctx.user.id)
     return DriveStatusResponse(connected=token is not None)
 
 
@@ -202,7 +202,7 @@ def drive_desconectar(
     ctx: ActiveContext = Depends(require_permission("sunat.drive.manage")),
     db: Session = Depends(get_db),
 ) -> dict:
-    drive_service.desconectar(db, ctx.company.id)
+    drive_service.desconectar(db, ctx.user.id)
     return {"message": "Drive desconectado"}
 
 

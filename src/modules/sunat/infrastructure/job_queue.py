@@ -145,7 +145,7 @@ def procesar_job(storage: FileStorage, job_id: str) -> None:
         "excel": excel_local,
         "descargas": job_dir,
         "_cancelar": cancelar,
-        "_persist_drive_token": _make_persist_drive_token(company_id),
+        "_persist_drive_token": _make_persist_drive_token(user_id),
     }
 
     estado = SunatJobStatus.completado

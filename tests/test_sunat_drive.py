@@ -47,8 +47,9 @@ def _override(db, user):
 
 
 def test_state_firma_y_lectura():
+    # El Drive es por usuario: el state se lee como el user_id que inició la conexión.
     state = drive_service._firmar_state(company_id=7, user_id=3)
-    assert drive_service._leer_state(state) == 7
+    assert drive_service._leer_state(state) == 3
 
 
 def test_state_invalido_lanza_error():
@@ -85,7 +86,7 @@ def test_callback_state_invalido_devuelve_html_error(db_session):
 def test_desconectar_elimina_token(db_session):
     user, empresa = _escenario(db_session, role_key="admin_empresa")
     db_session.add(
-        DriveTokenModel(company_id=empresa.id, access_token_enc="x", refresh_token_enc="y")
+        DriveTokenModel(user_id=user.id, access_token_enc="x", refresh_token_enc="y")
     )
     db_session.flush()
     _override(db_session, user)
@@ -98,7 +99,7 @@ def test_desconectar_elimina_token(db_session):
     assert resp.status_code == 200
     assert (
         db_session.scalar(
-            select(DriveTokenModel).where(DriveTokenModel.company_id == empresa.id)
+            select(DriveTokenModel).where(DriveTokenModel.user_id == user.id)
         )
         is None
     )

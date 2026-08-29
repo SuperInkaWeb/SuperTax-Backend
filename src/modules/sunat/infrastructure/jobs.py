@@ -79,19 +79,20 @@ def _limpiar_previews_viejos() -> None:
 threading.Thread(target=_limpiar_previews_viejos, daemon=True).start()
 
 
-def _make_persist_drive_token(company_id: int):
-    """Callback para que la automatización guarde el access token de Drive renovado."""
+def _make_persist_drive_token(user_id: int):
+    """Callback para que la automatización guarde el access token de Drive renovado
+    (del usuario dueño de la conexión)."""
 
     def _persist(nuevo_access_token: str) -> None:
         db = SessionLocal()
         try:
             token = (
                 db.query(DriveTokenModel)
-                .filter(DriveTokenModel.company_id == company_id)
+                .filter(DriveTokenModel.user_id == user_id)
                 .first()
             )
             if token is None:
-                token = DriveTokenModel(company_id=company_id)
+                token = DriveTokenModel(user_id=user_id)
                 db.add(token)
             token.access_token_enc = encrypt_field(nuevo_access_token)
             db.commit()
