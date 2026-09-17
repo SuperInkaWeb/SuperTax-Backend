@@ -16,6 +16,35 @@ from .selectores import (
     XPATH_RUC_EMISOR,
 )
 
+# Texto exacto de la opción objetivo del buscador SOL (normalizado a minúsculas).
+_OPCION_CONSULTA = "nueva consulta de comprobantes de pago"
+# Frase base para el respaldo por coincidencia parcial (cuentas con otro rótulo).
+_FRASE_CONSULTA_BASE = "nueva consulta de comprobantes"
+
+
+def _norm_txt(texto: str) -> str:
+    """Colapsa espacios y pasa a minúsculas para comparar textos del menú SOL."""
+    return " ".join((texto or "").split()).lower()
+
+
+def _elegir_resultado_consulta(candidatos):
+    """Elige el enlace de 'Nueva Consulta de comprobantes de pago' del buscador.
+
+    Prioriza la coincidencia EXACTA con la opción objetivo: así descarta tanto los
+    contenedores padre (que arrastran texto largo del menú) como variantes de otras
+    cuentas (p. ej. '... electrónicos'). Si no hay match exacto, cae al enlace más
+    corto que contenga la frase base (comportamiento previo). Ante duplicados
+    idénticos toma el primero en orden del DOM. Devuelve el locator o None.
+    """
+    evaluados = [(el, _norm_txt(el.text_content())) for el in candidatos]
+    for el, txt in evaluados:
+        if txt == _OPCION_CONSULTA:
+            return el
+    con_frase = [(el, txt) for el, txt in evaluados if _FRASE_CONSULTA_BASE in txt]
+    if con_frase:
+        return min(con_frase, key=lambda par: len(par[1]))[0]
+    return None
+
 
 def _hacer_login(page, context, config, log):
     """Navega al portal SUNAT, llena credenciales y resuelve el flujo OAuth.
@@ -179,11 +208,7 @@ def _navegar_al_modulo(page, log):
     candidatos = page.locator(
         "xpath=//*[contains(normalize-space(),'Nueva Consulta de comprobantes') and not(self::input)]"
     ).all()
-    resultado_link = min(
-        (el for el in candidatos if "Nueva Consulta" in (el.text_content() or "")),
-        key=lambda el: len(el.text_content() or ""),
-        default=None,
-    )
+    resultado_link = _elegir_resultado_consulta(candidatos)
     if not resultado_link:
         raise Exception("No se encontro 'Nueva Consulta de comprobantes' en el buscador")
 
