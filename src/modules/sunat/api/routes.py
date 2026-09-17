@@ -230,9 +230,11 @@ async def preview_excel(
 
 @router.post("/iniciar", dependencies=_MODULO)
 async def iniciar(
-    ruc: str = Form(...),
-    usuario: str = Form(...),
-    clave: str = Form(...),
+    # Vacíos = usar las credenciales guardadas de la empresa (ver _resolver_login).
+    # Deben tener default: Form(...) rechaza el string vacío como "Field required".
+    ruc: str = Form(""),
+    usuario: str = Form(""),
+    clave: str = Form(""),
     usar_correo: str = Form("false"),
     gmail_user: str = Form(""),
     gmail_pass: str = Form(""),
@@ -278,9 +280,10 @@ async def iniciar(
 
 @router.post("/forzar-faltantes", dependencies=_MODULO)
 async def forzar_faltantes(
-    ruc: str = Form(...),
-    usuario: str = Form(...),
-    clave: str = Form(...),
+    # Vacíos = usar las credenciales guardadas de la empresa (ver _resolver_login).
+    ruc: str = Form(""),
+    usuario: str = Form(""),
+    clave: str = Form(""),
     usar_correo: str = Form("false"),
     gmail_user: str = Form(""),
     gmail_pass: str = Form(""),

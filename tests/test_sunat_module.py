@@ -153,6 +153,39 @@ def test_iniciar_con_correo_invalido_da_400(db_session):
     assert resp.status_code == 400
 
 
+def test_iniciar_clave_vacia_usa_guardadas_no_422(db_session):
+    """Con credenciales guardadas, clave vacía debe usar las guardadas y NO dar 422.
+
+    Regresión: los campos ruc/usuario/clave deben tener default (Form("")); si son
+    Form(...) requeridos, FastAPI rechaza el string vacío como "Field required" y el
+    job nunca llega a _resolver_login (que usa lo guardado). Sin archivo, falla más
+    adelante con 400 ("Debes subir un archivo"), pero jamás con 422 por la clave.
+    """
+    from src.modules.sunat.application.credentials import set_credentials
+    from src.modules.sunat.infrastructure.repositories import SqlSunatCredentialsRepository
+
+    user, empresa = _escenario(db_session, role_key="operador")
+    set_credentials(
+        SqlSunatCredentialsRepository(db_session),
+        company_id=empresa.id,
+        user_id=user.id,
+        ruc="20700000001",
+        usuario="U",
+        clave="SECRETA",
+    )
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/sunat/iniciar",
+            headers={"X-Company-Id": str(empresa.id)},
+            data={"ruc": "", "usuario": "", "clave": "", "usar_drive": "true"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code != 422
+    assert resp.status_code == 400  # falla por falta de archivo, no por la clave
+
+
 def test_logs_job_inexistente_da_404(db_session):
     app.dependency_overrides[get_db] = lambda: db_session
     try:
