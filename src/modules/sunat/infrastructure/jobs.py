@@ -132,8 +132,8 @@ async def excel_a_tmp(excel: UploadFile | None) -> str:
     sube como un archivo normal por este mismo camino."""
     if not excel:
         raise ValueError("Debes subir un archivo Excel")
-    if not (excel.filename or "").lower().endswith((".xlsx", ".xls", ".csv")):
-        raise ValueError("El archivo debe ser Excel (.xlsx/.xls) o CSV")
+    if not (excel.filename or "").lower().endswith((".xlsx", ".xls", ".csv", ".txt")):
+        raise ValueError("El archivo debe ser Excel (.xlsx/.xls), CSV o TXT")
     content = await excel.read()
     if len(content) > MAX_EXCEL_BYTES:
         raise ValueError("El archivo es demasiado grande (máximo 10 MB)")
