@@ -29,10 +29,11 @@ from src.modules.sire.infrastructure.reconciliation.observaciones import (
 from src.modules.sire.infrastructure.report.excel_generator import generate_excel
 
 
-def _emp(serie, igv, base=0.0, importe=0.0, fecha="2026-05-01", tipo="03", numero="1"):
+def _emp(serie, igv, base=0.0, importe=0.0, fecha="2026-05-01", tipo="03",
+         numero="1", numero_final=""):
     return EmpresaRecord(
-        tipo_cdp=tipo, serie=serie, numero=numero, importe_total=importe,
-        fecha_emision=fecha, base_imponible=base, igv=igv,
+        tipo_cdp=tipo, serie=serie, numero=numero, numero_final=numero_final,
+        importe_total=importe, fecha_emision=fecha, base_imponible=base, igv=igv,
     )
 
 
@@ -200,6 +201,30 @@ def test_correlatividad_detecta_huecos_en_nc():
 def test_correlatividad_ignora_comprobantes_no_nc():
     recs = [_emp("F001", 10, tipo="01", numero=str(n)) for n in (1, 5)]  # facturas
     assert detectar_correlatividad(recs) == []
+
+
+def test_correlatividad_boletas_por_rangos():
+    recs = [
+        _emp("B001", 10, numero="100", numero_final="150"),
+        _emp("B001", 10, numero="151", numero_final="200"),
+        _emp("B001", 10, numero="205", numero_final="260"),   # salto: faltan 201-204
+    ]
+    res = detectar_correlatividad(recs)
+    assert len(res) == 1
+    assert res[0].tipo == "03"
+    assert res[0].faltantes == "201-204"
+    assert res[0].cantidad == 4
+
+
+def test_correlatividad_numeracion_irregular_no_lista_millones():
+    recs = [
+        _emp("0070", 10, numero="7000141", numero_final="7000200"),
+        _emp("0070", 10, numero="70000116", numero_final="70000140"),   # 7 vs 8 dígitos
+    ]
+    res = detectar_correlatividad(recs)
+    assert len(res) == 1
+    assert "irregular" in res[0].faltantes
+    assert res[0].cantidad > 500
 
 
 def test_duplicados_detecta_clave_repetida():

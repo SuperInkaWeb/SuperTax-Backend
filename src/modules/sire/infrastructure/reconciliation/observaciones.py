@@ -2,26 +2,30 @@
 Observaciones del Registro de Ventas: correlatividad y duplicados.
 
 Dos revisiones que no cubren los escenarios A/B/C/D:
-  - Correlatividad: huecos en la numeración de las notas de crédito (una serie
-    debería ser continua; un número faltante puede ser un documento sin declarar).
+  - Correlatividad: huecos en la numeración de boletas (03) y notas de crédito
+    (07); una serie debería ser continua, y un número faltante puede ser un
+    documento sin declarar. Se maneja por rangos: cada boleta puede declararse
+    como un rango (número inicial→final) y cada NC como un rango de un solo
+    número; se buscan los huecos entre rangos consecutivos sin materializar los
+    números (hay series con millones).
   - Duplicados: la misma clave tipo+serie+número declarada más de una vez.
 
-Las boletas (tipo 03) se declaran por rangos (número inicial→final); su
-correlatividad requiere ese número final, que el parser aún no expone, así que
-aquí se cubren los comprobantes de numeración individual (NC). Ver la memoria
-`sire-boletas-dashboard-requerimientos`.
+Ver la memoria `sire-boletas-dashboard-requerimientos`.
 """
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 
-# Tipos con numeración individual sobre los que tiene sentido revisar huecos.
-# Las boletas (03) van por rangos y quedan fuera hasta capturar el número final.
-_TIPOS_CORRELATIVIDAD = {"07"}
+# Tipos sobre los que se revisan huecos: boletas (03) y notas de crédito (07).
+_TIPOS_CORRELATIVIDAD = {"03", "07"}
 
-# Si en una serie faltan más de esto, casi seguro no es una secuencia propia
-# continua (p. ej. facturas salteadas); no se reporta para no meter ruido.
-_MAX_FALTANTES = 500
+# Una serie se marca "irregular" (en vez de listar sus faltantes) si tiene un
+# salto gigante entre rangos —típico de una numeración que cambia de longitud,
+# p. ej. mezcla números de 7 y 8 dígitos— o demasiados faltantes en total. Así no
+# se vuelcan miles/millones de números y se distingue de huecos reales.
+_GAP_IRREGULAR = 10_000
+_MAX_LISTAR = 1_000
+_IRREGULAR = "numeración irregular — revisar la serie manualmente"
 
 
 @dataclass(slots=True)
@@ -47,39 +51,65 @@ def _a_entero(numero: str) -> int | None:
     return int(digitos) if digitos else None
 
 
-def _compactar(numeros: list[int]) -> str:
-    """[721, 722, 723, 730] → '721-723, 730'."""
-    partes: list[str] = []
-    inicio = previo = numeros[0]
-    for n in numeros[1:]:
-        if n == previo + 1:
-            previo = n
-        else:
-            partes.append(str(inicio) if inicio == previo else f"{inicio}-{previo}")
-            inicio = previo = n
-    partes.append(str(inicio) if inicio == previo else f"{inicio}-{previo}")
-    return ", ".join(partes)
+def _rango(numero: str, numero_final: str) -> tuple[int, int] | None:
+    """(número inicial, número final) del comprobante. Una NC o boleta suelta es
+    un rango de un solo número; una boleta por rango usa su número final."""
+    ini = _a_entero(numero)
+    if ini is None:
+        return None
+    fin = _a_entero(numero_final)
+    if fin is None or fin < ini:
+        fin = ini
+    return (ini, fin)
+
+
+def _huecos(rangos: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], int, int]:
+    """Tramos faltantes entre rangos consecutivos, su total y el salto más grande,
+    sin expandir los números (hay series con millones): solo se comparan bordes."""
+    rangos = sorted(rangos)
+    tramos: list[tuple[int, int]] = []
+    total = 0
+    max_tramo = 0
+    max_fin = rangos[0][1]
+    for ini, fin in rangos[1:]:
+        if ini > max_fin + 1:
+            ancho = ini - 1 - max_fin
+            tramos.append((max_fin + 1, ini - 1))
+            total += ancho
+            max_tramo = max(max_tramo, ancho)
+        if fin > max_fin:
+            max_fin = fin
+    return tramos, total, max_tramo
+
+
+def _fmt_tramos(tramos: list[tuple[int, int]]) -> str:
+    """[(721, 723), (730, 730)] → '721-723, 730'."""
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in tramos)
 
 
 def detectar_correlatividad(records) -> list[SerieFaltantes]:
-    """Por cada serie de NC, los números que faltan entre el mínimo y el máximo."""
-    por_serie: dict[tuple[str, str], set[int]] = defaultdict(set)
+    """Por cada serie de boletas/NC, los números faltantes entre sus rangos."""
+    por_serie: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
     for r in records:
         tipo = str(r.tipo_cdp).strip()
         if tipo not in _TIPOS_CORRELATIVIDAD:
             continue
-        n = _a_entero(r.numero)
-        if n is not None:
-            por_serie[(tipo, str(r.serie).strip().upper())].add(n)
+        rango = _rango(r.numero, getattr(r, "numero_final", ""))
+        if rango is not None:
+            por_serie[(tipo, str(r.serie).strip().upper())].append(rango)
 
     resultado: list[SerieFaltantes] = []
-    for (tipo, serie), numeros in por_serie.items():
-        if len(numeros) < 2:
+    for (tipo, serie), rangos in por_serie.items():
+        if len(rangos) < 2:
             continue
-        faltan = sorted(set(range(min(numeros), max(numeros) + 1)) - numeros)
-        if not faltan or len(faltan) > _MAX_FALTANTES:
+        tramos, total, max_tramo = _huecos(rangos)
+        if total == 0:
             continue
-        resultado.append(SerieFaltantes(tipo, serie, _compactar(faltan), len(faltan)))
+        if max_tramo > _GAP_IRREGULAR or total > _MAX_LISTAR:
+            faltantes = _IRREGULAR
+        else:
+            faltantes = _fmt_tramos(tramos)
+        resultado.append(SerieFaltantes(tipo, serie, faltantes, total))
     resultado.sort(key=lambda x: (x.tipo, x.serie))
     return resultado
 

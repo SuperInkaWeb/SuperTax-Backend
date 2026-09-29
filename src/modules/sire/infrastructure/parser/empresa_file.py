@@ -59,6 +59,9 @@ class EmpresaRecord:
     numero: str
     importe_total: float
     fecha_emision: str = ""
+    # Número final del rango (boletas declaradas por rango en el PLE); vacío = un
+    # solo comprobante. Se usa para la correlatividad de boletas.
+    numero_final: str = ""
     base_imponible: float = 0.0
     igv: float = 0.0
     mto_exonerado: float = 0.0
@@ -456,7 +459,7 @@ PLE141_FORMAT_HELP = (
 )
 
 _PLE141_IDX = {
-    "fecha": 3, "tipo": 5, "serie": 6, "numero": 7,
+    "fecha": 3, "tipo": 5, "serie": 6, "numero": 7, "numero_final": 8,
     "exportacion": 12, "bi": 13, "dscto_bi": 14, "igv": 15, "dscto_igv": 16,
     "exonerado": 17, "inafecto": 18, "isc": 19,
     "bi_ivap": 20, "ivap": 21, "icbper": 22, "otros": 23,
@@ -636,6 +639,7 @@ def _try_parse_as_ple_ventas(content: bytes) -> list[EmpresaRecord] | None:
             tipo_cdp      = t,
             serie         = s,
             numero        = n,
+            numero_final  = nf,
             importe_total = tot,
             fecha_emision = f,
             base_imponible= b,
@@ -645,10 +649,11 @@ def _try_parse_as_ple_ventas(content: bytes) -> list[EmpresaRecord] | None:
             moneda        = mon,
             tipo_cambio   = tc,
         )
-        for t, s, n, f, b, g, exo, ina, tot, mon, tc in zip(
+        for t, s, n, nf, f, b, g, exo, ina, tot, mon, tc in zip(
             col_s(I["tipo"]).tolist(),
             col_s(I["serie"]).tolist(),
             col_s(I["numero"]).tolist(),
+            col_s(I["numero_final"]).tolist(),
             fecha_arr.tolist(),
             base_arr.tolist(),
             igv_arr.tolist(),
