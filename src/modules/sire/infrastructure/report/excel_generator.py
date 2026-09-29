@@ -8,6 +8,7 @@ from src.modules.sire.infrastructure.reconciliation.engine import Reconciliation
 from src.modules.sire.infrastructure.reconciliation.boletas import (
     BOLETA_CUADRA, BOLETA_DIFIERE, BOLETA_SOLO_EMPRESA, BOLETA_SOLO_SUNAT,
 )
+from src.modules.sire.infrastructure.report.dashboard import agregar_hoja_dashboard
 
 
 RED_FILL     = PatternFill("solid", fgColor="FFC7CE")
@@ -590,9 +591,10 @@ def generate_excel(
                 cell.border = THIN_BORDER
     _finish_sheet(ws_d, n_cols_d, num_cols=num_cols_d if use_fmt_d else None)
 
-    # Hoja de detalle de boletas (solo ventas): serie×día con IGV de cada lado.
+    # Boletas (solo ventas): hoja de detalle serie×día + dashboard interactivo.
     if not es_compras and output.boletas_agregadas:
         _agregar_hoja_boletas(wb, output.boletas_agregadas)
+        agregar_hoja_dashboard(wb, output.boletas_agregadas)
 
     buf = io.BytesIO()
     wb.save(buf)

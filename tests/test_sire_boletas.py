@@ -159,3 +159,24 @@ def test_generate_excel_incluye_hoja_cruce_boletas():
     # La boleta cuadra → aparece en D como fila tipo 03.
     filas_d = wb["D - Coinciden OK"].iter_rows(min_row=2, values_only=True)
     assert any(fila[0] == "03" for fila in filas_d)
+
+
+def test_dashboard_se_genera_con_desplegable_y_graficos():
+    out = reconcile(
+        [_emp("0001", 300, base=1666.67, importe=1966.67, fecha="2026-08-01"),
+         _emp("B057", 90, base=500.0, importe=590.0, fecha="2026-08-01")],
+        [_sun("B001", 300, base=1666.67, importe=1966.67, fecha="2026-08-01", numero="1"),
+         _sun("B120", 120, base=666.67, importe=786.67, fecha="2026-08-01", numero="9")],
+        "ventas", None, periodo="202608",
+    )
+    xlsx = generate_excel(
+        output=out, empresa_nombre="ARUMA", ruc="20600657888",
+        periodo="202608", tipo_libro="ventas",
+        propuesta_generada=datetime.now(timezone.utc),
+    )
+    wb = load_workbook(BytesIO(xlsx))
+    assert wb.sheetnames[0] == "Dashboard"                       # primera pestaña
+    ws = wb["Dashboard"]
+    assert len(ws.data_validations.dataValidation) == 1          # desplegable de serie
+    assert len(ws._charts) == 2                                  # gráfico por día + top series
+    assert wb["Datos series"].sheet_state == "hidden"            # datos de apoyo ocultos
