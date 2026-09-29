@@ -11,6 +11,12 @@ from src.modules.sire.infrastructure.reconciliation.boletas import (
     comparar_boletas,
     es_boleta,
 )
+from src.modules.sire.infrastructure.reconciliation.observaciones import (
+    Duplicado,
+    SerieFaltantes,
+    detectar_correlatividad,
+    detectar_duplicados,
+)
 
 IGV_DIFF_THRESHOLD = 0.10
 
@@ -153,6 +159,9 @@ class ReconciliationOutput:
     sunat_duplicados: int = 0
     # Boletas (tipo 03) cruzadas por serie+día en vez de documento a documento.
     boletas_agregadas: list[BoletaComparada] = field(default_factory=list)
+    # Observaciones del Registro de Ventas: huecos de numeración y duplicados.
+    correlatividad: list[SerieFaltantes] = field(default_factory=list)
+    duplicados: list[Duplicado] = field(default_factory=list)
 
     @property
     def total_excluidos(self) -> int:
@@ -405,6 +414,9 @@ def reconcile(
     # y se cruzan por serie+día (ver módulo boletas). SUNAT las entrega una por
     # una y la empresa agrupada/por rangos, así que por número nunca casan.
     if not es_compras:
+        # Observaciones sobre el archivo tal cual llegó (antes de apartar boletas).
+        correlatividad = detectar_correlatividad(empresa_records)
+        duplicados = detectar_duplicados(empresa_records)
         empresa_boletas = [r for r in empresa_records if es_boleta(r)]
         sunat_boletas = [r for r in sunat_records if es_boleta(r)]
         boletas_agregadas = comparar_boletas(empresa_boletas, sunat_boletas)
@@ -412,6 +424,8 @@ def reconcile(
         sunat_records = [r for r in sunat_records if not es_boleta(r)]
     else:
         boletas_agregadas = []
+        correlatividad = []
+        duplicados = []
 
     conciliables = [r for r in empresa_records if r.key[1] in tipos_ok]
     excluidos = Counter(r.key[1] for r in empresa_records if r.key[1] not in tipos_ok)
@@ -504,4 +518,6 @@ def reconcile(
         csv_duplicados=csv_duplicados,
         sunat_duplicados=sunat_duplicados,
         boletas_agregadas=boletas_agregadas,
+        correlatividad=correlatividad,
+        duplicados=duplicados,
     )

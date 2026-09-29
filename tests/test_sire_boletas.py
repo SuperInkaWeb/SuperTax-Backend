@@ -22,6 +22,10 @@ from src.modules.sire.infrastructure.reconciliation.boletas import (
     normalizar_serie,
 )
 from src.modules.sire.infrastructure.reconciliation.engine import reconcile
+from src.modules.sire.infrastructure.reconciliation.observaciones import (
+    detectar_correlatividad,
+    detectar_duplicados,
+)
 from src.modules.sire.infrastructure.report.excel_generator import generate_excel
 
 
@@ -180,3 +184,49 @@ def test_dashboard_se_genera_con_desplegable_y_graficos():
     assert len(ws.data_validations.dataValidation) == 1          # desplegable de serie
     assert len(ws._charts) == 2                                  # gráfico por día + top series
     assert wb["Datos series"].sheet_state == "hidden"            # datos de apoyo ocultos
+
+
+# ── Observaciones: correlatividad y duplicados ──────────────────────────
+
+def test_correlatividad_detecta_huecos_en_nc():
+    recs = [_emp("BC01", -10, tipo="07", numero=str(n)) for n in (1, 2, 5)]  # faltan 3, 4
+    res = detectar_correlatividad(recs)
+    assert len(res) == 1
+    assert res[0].tipo == "07"
+    assert res[0].faltantes == "3-4"
+    assert res[0].cantidad == 2
+
+
+def test_correlatividad_ignora_comprobantes_no_nc():
+    recs = [_emp("F001", 10, tipo="01", numero=str(n)) for n in (1, 5)]  # facturas
+    assert detectar_correlatividad(recs) == []
+
+
+def test_duplicados_detecta_clave_repetida():
+    recs = [
+        _emp("BC01", -10, tipo="07", numero="100"),
+        _emp("BC01", -10, tipo="07", numero="100"),
+        _emp("BC01", -10, tipo="07", numero="101"),
+    ]
+    dups = detectar_duplicados(recs)
+    assert len(dups) == 1
+    assert dups[0].numero == "100"
+    assert dups[0].veces == 2
+
+
+def test_reporte_incluye_hoja_observaciones():
+    empresa = [
+        _emp("BC01", -10, base=-55.0, importe=-65.0, tipo="07", numero="1"),
+        _emp("BC01", -10, base=-55.0, importe=-65.0, tipo="07", numero="3"),  # falta 2
+        _emp("F001", 18, base=100.0, importe=118.0, tipo="01", numero="1"),
+        _emp("F001", 18, base=100.0, importe=118.0, tipo="01", numero="1"),   # duplicado
+    ]
+    out = reconcile(empresa, [], "ventas", None, periodo="202608")
+    assert any(o.tipo == "07" for o in out.correlatividad)
+    assert any(d.veces == 2 for d in out.duplicados)
+    xlsx = generate_excel(
+        output=out, empresa_nombre="X", ruc="20600657888",
+        periodo="202608", tipo_libro="ventas",
+        propuesta_generada=datetime.now(timezone.utc),
+    )
+    assert "Observaciones" in load_workbook(BytesIO(xlsx)).sheetnames

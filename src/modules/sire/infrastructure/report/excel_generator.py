@@ -119,6 +119,51 @@ def _agregar_hoja_boletas(wb, boletas) -> None:
     _finish_sheet(ws, 6, num_cols=[3, 4, 5])
 
 
+def _agregar_hoja_observaciones(wb, correlatividad, duplicados) -> None:
+    """Hoja «Observaciones»: notas de crédito con numeración faltante y
+    comprobantes duplicados (misma serie y número)."""
+    ws = wb.create_sheet("Observaciones")
+    ws.sheet_view.showGridLines = False
+    r = 1
+
+    ws.cell(row=r, column=1, value="Notas de crédito con numeración faltante").font = SECTION_FONT
+    r += 1
+    if correlatividad:
+        _set_header_row(ws, ["Tipo", "Serie", "Números faltantes", "Cantidad"], row=r)
+        r += 1
+        for obs in correlatividad:
+            for col, val in enumerate((obs.tipo, obs.serie, obs.faltantes, obs.cantidad), 1):
+                celda = ws.cell(row=r, column=col, value=val)
+                celda.border = THIN_BORDER
+                if col == 4:
+                    celda.alignment = Alignment(horizontal="center")
+            r += 1
+    else:
+        ws.cell(row=r, column=1, value="Sin huecos detectados en las notas de crédito.").font = NOTE_FONT
+        r += 1
+
+    r += 1
+    ws.cell(row=r, column=1, value="Comprobantes duplicados (misma serie y número)").font = SECTION_FONT
+    r += 1
+    if duplicados:
+        _set_header_row(ws, ["Tipo", "Serie", "Número", "Veces"], row=r)
+        r += 1
+        for dup in duplicados:
+            for col, val in enumerate((dup.tipo, dup.serie, dup.numero, dup.veces), 1):
+                celda = ws.cell(row=r, column=col, value=val)
+                celda.border = THIN_BORDER
+                if col == 4:
+                    celda.alignment = Alignment(horizontal="center")
+            r += 1
+    else:
+        ws.cell(row=r, column=1, value="Sin duplicados en el archivo.").font = NOTE_FONT
+
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 60
+    ws.column_dimensions["D"].width = 10
+
+
 def generate_excel(
     output: ReconciliationOutput,
     empresa_nombre: str,
@@ -595,6 +640,10 @@ def generate_excel(
     if not es_compras and output.boletas_agregadas:
         _agregar_hoja_boletas(wb, output.boletas_agregadas)
         agregar_hoja_dashboard(wb, output.boletas_agregadas)
+
+    # Observaciones (solo ventas): correlatividad de NC y duplicados.
+    if not es_compras and (output.correlatividad or output.duplicados):
+        _agregar_hoja_observaciones(wb, output.correlatividad, output.duplicados)
 
     buf = io.BytesIO()
     wb.save(buf)
