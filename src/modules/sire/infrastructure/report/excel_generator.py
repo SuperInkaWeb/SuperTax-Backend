@@ -5,6 +5,9 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from src.modules.sire.infrastructure.reconciliation.engine import ReconciliationOutput, IGV_DIFF_THRESHOLD, TIPO_LABELS
+from src.modules.sire.infrastructure.reconciliation.boletas import (
+    BOLETA_CUADRA, BOLETA_DIFIERE, BOLETA_SOLO_EMPRESA, BOLETA_SOLO_SUNAT,
+)
 
 
 RED_FILL     = PatternFill("solid", fgColor="FFC7CE")
@@ -78,6 +81,41 @@ def _finish_sheet(ws, n_cols: int, num_cols: list[int] | None = None, widths: di
 def _alert_style(cell, es_roja: bool):
     cell.fill = RED_FILL if es_roja else AMBER_FILL
     cell.font = RED_FONT if es_roja else AMBER_FONT
+
+
+_BOLETA_ESTADO_LABEL = {
+    BOLETA_CUADRA: "Cuadra OK",
+    BOLETA_DIFIERE: "Diferencia",
+    BOLETA_SOLO_EMPRESA: "Solo en tu archivo",
+    BOLETA_SOLO_SUNAT: "Solo en SUNAT",
+}
+
+
+def _agregar_hoja_boletas(wb, boletas) -> None:
+    """Hoja «Cruce boletas»: una fila por serie+día con el IGV de cada lado, la
+    diferencia y el estado (cuadra / difiere / solo en un lado). Es la vista de
+    detalle de las boletas que en A/B/C/D aparecen agregadas como «Boletas del día»."""
+    ws = wb.create_sheet("Cruce boletas")
+    _set_header_row(ws, [
+        "Fecha", "Serie", "IGV tu archivo", "IGV SUNAT", "Diferencia IGV", "Estado",
+    ])
+    for row_idx, b in enumerate(boletas, 2):
+        dif = round(b.igv_empresa - b.igv_sunat, 2)
+        valores = [
+            b.fecha, b.serie, b.igv_empresa, b.igv_sunat, dif,
+            _BOLETA_ESTADO_LABEL.get(b.estado, b.estado),
+        ]
+        for col_idx, val in enumerate(valores, 1):
+            ws.cell(row=row_idx, column=col_idx, value=val).border = THIN_BORDER
+        estado_cell = ws.cell(row=row_idx, column=6)
+        estado_cell.alignment = Alignment(horizontal="center")
+        if b.estado == BOLETA_CUADRA:
+            estado_cell.fill, estado_cell.font = GREEN_FILL, GREEN_FONT
+        elif b.es_alerta_roja:
+            estado_cell.fill, estado_cell.font = RED_FILL, RED_FONT
+        else:
+            estado_cell.fill, estado_cell.font = AMBER_FILL, AMBER_FONT
+    _finish_sheet(ws, 6, num_cols=[3, 4, 5])
 
 
 def generate_excel(
@@ -242,6 +280,15 @@ def generate_excel(
         notas.append((
             f"Filas duplicadas en la propuesta SUNAT: {output.sunat_duplicados:,}",
             "Se usó la última aparición.",
+        ))
+    if tipo_libro != "compras" and output.boletas_agregadas:
+        n_bol = len(output.boletas_agregadas)
+        cuadran = sum(1 for b in output.boletas_agregadas if b.estado == BOLETA_CUADRA)
+        notas.append((
+            f"Boletas: {n_bol:,} combinaciones serie/día revisadas",
+            f"{cuadran:,} cuadran y {n_bol - cuadran:,} con diferencia. Las boletas se "
+            "comparan sumadas por serie y día (no una por una); en A/B/C/D aparecen como "
+            "«Boletas del día» y el detalle por serie está en la hoja «Cruce boletas».",
         ))
     # Cada hoja muestra hasta el máximo de filas de Excel; si un escenario lo
     # supera, se corta en la hoja y el listado completo va a un CSV descargable.
@@ -542,6 +589,10 @@ def generate_excel(
             if use_fmt_d:
                 cell.border = THIN_BORDER
     _finish_sheet(ws_d, n_cols_d, num_cols=num_cols_d if use_fmt_d else None)
+
+    # Hoja de detalle de boletas (solo ventas): serie×día con IGV de cada lado.
+    if not es_compras and output.boletas_agregadas:
+        _agregar_hoja_boletas(wb, output.boletas_agregadas)
 
     buf = io.BytesIO()
     wb.save(buf)

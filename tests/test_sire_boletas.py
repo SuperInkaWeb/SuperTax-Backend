@@ -5,6 +5,11 @@ Verifica la regla de normalización de serie, que cualquier estilo de agrupació
 (sueltas, por rangos, resumen) colapse al mismo total diario, la clasificación
 del cruce, y que el motor aparte las boletas de los escenarios A/B/C/D en ventas.
 """
+from datetime import datetime, timezone
+from io import BytesIO
+
+from openpyxl import load_workbook
+
 from src.modules.sire.infrastructure.parser.empresa_file import EmpresaRecord
 from src.modules.sire.infrastructure.parser.sunat_propuesta import SunatRecord
 from src.modules.sire.infrastructure.reconciliation.boletas import (
@@ -17,6 +22,7 @@ from src.modules.sire.infrastructure.reconciliation.boletas import (
     normalizar_serie,
 )
 from src.modules.sire.infrastructure.reconciliation.engine import reconcile
+from src.modules.sire.infrastructure.report.excel_generator import generate_excel
 
 
 def _emp(serie, igv, base=0.0, importe=0.0, fecha="2026-05-01", tipo="03", numero="1"):
@@ -101,7 +107,7 @@ def test_solo_en_un_lado():
 
 # ── Integración con el motor ────────────────────────────────────────────
 
-def test_reconcile_aparta_boletas_de_abcd_en_ventas():
+def test_reconcile_boletas_van_a_abcd_y_al_detalle():
     empresa = [
         _emp("F001", 18, base=100.0, importe=118.0, tipo="01"),   # factura
         _emp("0127", 30, base=165.0),                              # boleta agrupada
@@ -112,13 +118,44 @@ def test_reconcile_aparta_boletas_de_abcd_en_ventas():
     ]
     out = reconcile(empresa, sunat, "ventas", None, periodo="202605")
 
-    todos = out.scenario_a + out.scenario_b + out.scenario_c + out.scenario_d
-    assert all(r.tipo_cdp != "03" for r in todos)          # ninguna boleta en A/B/C/D
-    assert len(out.scenario_d) == 1                         # la factura cuadra
-    assert len(out.boletas_agregadas) == 1                  # la boleta va aparte
+    # Detalle serie+día conservado aparte (para hoja Cruce boletas y dashboard).
+    assert len(out.boletas_agregadas) == 1
     assert out.boletas_agregadas[0].estado == BOLETA_CUADRA
+
+    # La boleta aparece también en D como fila agregada, con la serie normalizada.
+    boletas_en_d = [r for r in out.scenario_d if r.tipo_cdp == "03"]
+    assert len(boletas_en_d) == 1
+    assert boletas_en_d[0].serie == "B127"
+    assert any(r.tipo_cdp == "01" for r in out.scenario_d)   # la factura también cuadra
+    assert out.scenario_a == [] and out.scenario_b == []
+
+
+def test_reconcile_boleta_con_diferencia_va_a_escenario_c():
+    out = reconcile([_emp("B001", 100, base=500.0)],
+                    [_sun("B001", 80, base=500.0)], "ventas", None, periodo="202605")
+    boletas_c = [r for r in out.scenario_c if r.tipo_cdp == "03"]
+    assert len(boletas_c) == 1
+    assert "igv" in boletas_c[0].campos_diferentes
 
 
 def test_reconcile_compras_no_agrega_boletas():
     out = reconcile([_emp("B001", 10)], [_sun("B001", 10)], "compras", None, periodo="202605")
     assert out.boletas_agregadas == []
+
+
+def test_generate_excel_incluye_hoja_cruce_boletas():
+    out = reconcile(
+        [_emp("0127", 30, base=165.0, importe=195.0)],
+        [_sun("B127", 30, base=165.0, importe=195.0, numero="9")],
+        "ventas", None, periodo="202605",
+    )
+    xlsx = generate_excel(
+        output=out, empresa_nombre="ARUMA", ruc="20600657888",
+        periodo="202605", tipo_libro="ventas",
+        propuesta_generada=datetime.now(timezone.utc),
+    )
+    wb = load_workbook(BytesIO(xlsx))
+    assert "Cruce boletas" in wb.sheetnames
+    # La boleta cuadra → aparece en D como fila tipo 03.
+    filas_d = wb["D - Coinciden OK"].iter_rows(min_row=2, values_only=True)
+    assert any(fila[0] == "03" for fila in filas_d)

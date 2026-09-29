@@ -4,7 +4,9 @@ from typing import Optional, Union
 from src.modules.sire.infrastructure.parser.empresa_file import EmpresaRecord
 from src.modules.sire.infrastructure.parser.sunat_propuesta import SunatRecord
 from src.modules.sire.infrastructure.reconciliation.boletas import (
-    BOLETA_CUADRA,
+    BOLETA_DIFIERE,
+    BOLETA_SOLO_EMPRESA,
+    BOLETA_SOLO_SUNAT,
     BoletaComparada,
     comparar_boletas,
     es_boleta,
@@ -166,9 +168,6 @@ class ReconciliationOutput:
                     total += abs(diff.diferencia)
         for rec in self.scenario_b:
             total += abs(rec.igv_sunat)
-        for bol in self.boletas_agregadas:
-            if bol.estado != BOLETA_CUADRA:
-                total += abs(bol.diferencia_igv)
         return round(total, 2)
 
     @property
@@ -177,7 +176,6 @@ class ReconciliationOutput:
             any(r.es_alerta_roja for r in self.scenario_a)
             or any(r.es_alerta_roja for r in self.scenario_b)
             or any(r.es_alerta_roja for r in self.scenario_c)
-            or any(b.es_alerta_roja for b in self.boletas_agregadas)
         )
 
 
@@ -314,6 +312,78 @@ def _construir_a(emp: EmpresaRecord) -> ScenarioARecord:
     )
 
 
+# Etiqueta que va en la columna «Número» de una boleta agregada (es un total del
+# día, no un comprobante suelto) y mapeo de los campos de boleta a los del motor.
+_NUMERO_BOLETA = "Boletas del día"
+_BOLETA_CAMPO_MAP = {
+    "base": "base_imponible",
+    "igv": "igv",
+    "importe": "importe_total",
+    "exonerado": "mto_exonerado",
+    "inafecto": "mto_inafecto",
+}
+
+
+def _boletas_a_escenarios(boletas: list[BoletaComparada]):
+    """
+    Proyecta cada boleta agregada (serie+día) al escenario A/B/C/D que le
+    corresponde, para que aparezca junto a facturas y NC en el reporte general
+    (decisión: A/B/C/D completos por tipo). El detalle serie×día se conserva
+    aparte en `boletas_agregadas` para la hoja «Cruce boletas» y el dashboard.
+    """
+    a: list[ScenarioARecord] = []
+    b: list[ScenarioBRecord] = []
+    c: list[ScenarioCRecord] = []
+    d: list[ScenarioDRecord] = []
+    for bo in boletas:
+        if bo.estado == BOLETA_SOLO_EMPRESA:
+            a.append(ScenarioARecord(
+                tipo_cdp="03", serie=bo.serie, numero=_NUMERO_BOLETA, fecha_emision=bo.fecha,
+                base_imponible=bo.base_empresa, igv=bo.igv_empresa,
+                importe_total=bo.importe_empresa, es_alerta_roja=bo.es_alerta_roja,
+            ))
+        elif bo.estado == BOLETA_SOLO_SUNAT:
+            b.append(ScenarioBRecord(
+                tipo_cdp="03", serie=bo.serie, numero=_NUMERO_BOLETA, fecha_emision=bo.fecha,
+                base_imponible_sunat=bo.base_sunat, igv_sunat=bo.igv_sunat,
+                importe_total_sunat=bo.importe_sunat, es_alerta_roja=bo.es_alerta_roja,
+            ))
+        elif bo.estado == BOLETA_DIFIERE:
+            valores = {
+                "base": (bo.base_empresa, bo.base_sunat),
+                "igv": (bo.igv_empresa, bo.igv_sunat),
+                "importe": (bo.importe_empresa, bo.importe_sunat),
+                "exonerado": (bo.exonerado_empresa, bo.exonerado_sunat),
+                "inafecto": (bo.inafecto_empresa, bo.inafecto_sunat),
+            }
+            diffs = [
+                DifferenceDetail(_BOLETA_CAMPO_MAP[campo], ve, vs, round(ve - vs, 2))
+                for campo in bo.campos_diferentes
+                for ve, vs in [valores[campo]]
+            ]
+            c.append(ScenarioCRecord(
+                tipo_cdp="03", serie=bo.serie, numero=_NUMERO_BOLETA,
+                fecha_emision_empresa=bo.fecha, fecha_emision_sunat=bo.fecha,
+                base_imponible_empresa=bo.base_empresa, base_imponible_sunat=bo.base_sunat,
+                igv_empresa=bo.igv_empresa, igv_sunat=bo.igv_sunat,
+                importe_total_empresa=bo.importe_empresa, importe_total_sunat=bo.importe_sunat,
+                mto_exonerado_empresa=bo.exonerado_empresa, mto_exonerado_sunat=bo.exonerado_sunat,
+                mto_inafecto_empresa=bo.inafecto_empresa, mto_inafecto_sunat=bo.inafecto_sunat,
+                diferencias=diffs, es_alerta_roja=bo.es_alerta_roja,
+            ))
+        else:  # BOLETA_CUADRA
+            d.append(ScenarioDRecord(
+                tipo_cdp="03", serie=bo.serie, numero=_NUMERO_BOLETA,
+                fecha_emision_empresa=bo.fecha, fecha_emision_sunat=bo.fecha,
+                base_imponible_empresa=bo.base_empresa, base_imponible_sunat=bo.base_sunat,
+                igv_empresa=bo.igv_empresa, igv_sunat=bo.igv_sunat,
+                importe_total_empresa=bo.importe_empresa, importe_total_sunat=bo.importe_sunat,
+                mto_exonerado_empresa=bo.exonerado_empresa, mto_exonerado_sunat=bo.exonerado_sunat,
+                mto_inafecto_empresa=bo.inafecto_empresa, mto_inafecto_sunat=bo.inafecto_sunat,
+            ))
+    return a, b, c, d
+
+
 def reconcile(
     empresa_records: list[EmpresaRecord],
     sunat_records: list[SunatRecord],
@@ -415,6 +485,15 @@ def reconcile(
             scenario_c.append(_construir_c(emp, sun, diffs))
         else:
             scenario_d.append(_construir_d(emp, sun))
+
+    # Las boletas (ya cruzadas por serie+día) se suman a A/B/C/D como filas
+    # agregadas, para el reporte general con todos los tipos.
+    if boletas_agregadas:
+        bol_a, bol_b, bol_c, bol_d = _boletas_a_escenarios(boletas_agregadas)
+        scenario_a += bol_a
+        scenario_b += bol_b
+        scenario_c += bol_c
+        scenario_d += bol_d
 
     return ReconciliationOutput(
         scenario_a=scenario_a,
