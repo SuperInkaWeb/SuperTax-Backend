@@ -3,6 +3,12 @@ from dataclasses import dataclass, field
 from typing import Optional, Union
 from src.modules.sire.infrastructure.parser.empresa_file import EmpresaRecord
 from src.modules.sire.infrastructure.parser.sunat_propuesta import SunatRecord
+from src.modules.sire.infrastructure.reconciliation.boletas import (
+    BOLETA_CUADRA,
+    BoletaComparada,
+    comparar_boletas,
+    es_boleta,
+)
 
 IGV_DIFF_THRESHOLD = 0.10
 
@@ -143,6 +149,8 @@ class ReconciliationOutput:
     excluidos_por_tipo: dict[str, int] = field(default_factory=dict)
     csv_duplicados: int = 0
     sunat_duplicados: int = 0
+    # Boletas (tipo 03) cruzadas por serie+día en vez de documento a documento.
+    boletas_agregadas: list[BoletaComparada] = field(default_factory=list)
 
     @property
     def total_excluidos(self) -> int:
@@ -158,6 +166,9 @@ class ReconciliationOutput:
                     total += abs(diff.diferencia)
         for rec in self.scenario_b:
             total += abs(rec.igv_sunat)
+        for bol in self.boletas_agregadas:
+            if bol.estado != BOLETA_CUADRA:
+                total += abs(bol.diferencia_igv)
         return round(total, 2)
 
     @property
@@ -166,6 +177,7 @@ class ReconciliationOutput:
             any(r.es_alerta_roja for r in self.scenario_a)
             or any(r.es_alerta_roja for r in self.scenario_b)
             or any(r.es_alerta_roja for r in self.scenario_c)
+            or any(b.es_alerta_roja for b in self.boletas_agregadas)
         )
 
 
@@ -319,6 +331,18 @@ def reconcile(
     es_compras = tipo_libro == "compras"
     tipos_ok = TIPOS_CONCILIABLES_COMPRAS if es_compras else TIPOS_CONCILIABLES
 
+    # Boletas (tipo 03, solo ventas): se apartan del cruce documento a documento
+    # y se cruzan por serie+día (ver módulo boletas). SUNAT las entrega una por
+    # una y la empresa agrupada/por rangos, así que por número nunca casan.
+    if not es_compras:
+        empresa_boletas = [r for r in empresa_records if es_boleta(r)]
+        sunat_boletas = [r for r in sunat_records if es_boleta(r)]
+        boletas_agregadas = comparar_boletas(empresa_boletas, sunat_boletas)
+        empresa_records = [r for r in empresa_records if not es_boleta(r)]
+        sunat_records = [r for r in sunat_records if not es_boleta(r)]
+    else:
+        boletas_agregadas = []
+
     conciliables = [r for r in empresa_records if r.key[1] in tipos_ok]
     excluidos = Counter(r.key[1] for r in empresa_records if r.key[1] not in tipos_ok)
 
@@ -400,4 +424,5 @@ def reconcile(
         excluidos_por_tipo=dict(excluidos),
         csv_duplicados=csv_duplicados,
         sunat_duplicados=sunat_duplicados,
+        boletas_agregadas=boletas_agregadas,
     )
