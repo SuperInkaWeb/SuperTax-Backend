@@ -12,6 +12,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from src.modules.sire.infrastructure.reconciliation.boletas import TOL_IGV
+
 _TITULO_FONT = Font(color="FFFFFF", bold=True, size=14)
 _TITULO_FILL = PatternFill("solid", fgColor="1F4E78")
 _LABEL_FONT = Font(bold=True, color="1F4E78")
@@ -89,7 +91,8 @@ def _hoja_diferencias(wb, series, fechas, ple_sf, sire_sf):
     filas = []
     for s in series:
         difs = [round(ple_sf.get((s, f), 0.0) - sire_sf.get((s, f), 0.0), 2) for f in fechas]
-        if sum(abs(d) for d in difs) > 0.01:
+        # Solo series con algún día que supere la tolerancia de IGV (lo demás es redondeo).
+        if any(abs(d) > TOL_IGV for d in difs):
             filas.append((s, difs, round(sum(difs), 2)))
     filas.sort(key=lambda x: -sum(abs(d) for d in x[1]))   # más descuadre primero
 
@@ -112,8 +115,8 @@ def _hoja_diferencias(wb, series, fechas, ple_sf, sire_sf):
             celda = ws.cell(row=fila_idx, column=col_idx)
             celda.number_format = _NUM
             valor = celda.value
-            if isinstance(valor, (int, float)) and abs(valor) > 0.01:
-                celda.fill = _DIFF_FILL      # solo se pinta donde NO cuadra
+            if isinstance(valor, (int, float)) and abs(valor) > TOL_IGV:
+                celda.fill = _DIFF_FILL      # se pinta donde la diferencia supera S/ 1
                 celda.font = _BOLD
 
     ws.freeze_panes = "B2"

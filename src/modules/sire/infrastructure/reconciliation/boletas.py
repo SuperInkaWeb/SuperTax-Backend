@@ -18,13 +18,19 @@ from src.modules.sire.infrastructure.parser.sunat_propuesta import SunatRecord
 
 TIPO_BOLETA = "03"
 
-# Tolerancia de S/ 0.01 al comparar montos e IGV que marca alerta roja: los
-# mismos umbrales que usa el motor documento a documento (ver engine.py).
-_TOL = 0.01
-_IGV_ALERTA = 0.10
+# Tolerancias de comparación (pedido del contador): una diferencia solo se
+# reporta si supera estos montos; por debajo es redondeo y se considera que cuadra.
+#   IGV → más de S/ 1.00 · resto de columnas de montos → más de S/ 3.00
+TOL_IGV = 1.00
+TOL_MONTO = 3.00
 
-# Campos monetarios que se suman y comparan por serie + día (semántica de ventas).
+# Campos monetarios que se suman y comparan por serie + día (semántica de ventas)
+# y la tolerancia que aplica a cada uno.
 _CAMPOS = ("base", "igv", "importe", "exonerado", "inafecto")
+_TOL_CAMPO = {
+    "base": TOL_MONTO, "igv": TOL_IGV, "importe": TOL_MONTO,
+    "exonerado": TOL_MONTO, "inafecto": TOL_MONTO,
+}
 
 # Estado de una boleta agregada (una serie en un día).
 BOLETA_SOLO_EMPRESA = "solo_empresa"   # en tu archivo, no en SUNAT
@@ -130,10 +136,15 @@ def comparar_boletas(
         elif clave not in emp:
             estado, campos = BOLETA_SOLO_SUNAT, []
         else:
-            campos = [c for c in _CAMPOS if abs(getattr(e, c) - getattr(s, c)) > _TOL]
+            campos = [c for c in _CAMPOS if abs(getattr(e, c) - getattr(s, c)) > _TOL_CAMPO[c]]
             estado = BOLETA_DIFIERE if campos else BOLETA_CUADRA
 
-        es_roja = estado != BOLETA_CUADRA and abs(round(e.igv - s.igv, 2)) > _IGV_ALERTA
+        if estado == BOLETA_CUADRA:
+            es_roja = False
+        elif estado == BOLETA_DIFIERE:
+            es_roja = "igv" in campos                             # la diferencia toca el IGV
+        else:                                                     # solo en un lado
+            es_roja = abs(round(e.igv - s.igv, 2)) > TOL_IGV
         resultado.append(BoletaComparada(
             serie=serie, fecha=fecha,
             base_empresa=round(e.base, 2), igv_empresa=round(e.igv, 2),

@@ -7,6 +7,8 @@ from src.modules.sire.infrastructure.reconciliation.boletas import (
     BOLETA_DIFIERE,
     BOLETA_SOLO_EMPRESA,
     BOLETA_SOLO_SUNAT,
+    TOL_IGV,
+    TOL_MONTO,
     BoletaComparada,
     comparar_boletas,
     es_boleta,
@@ -202,7 +204,9 @@ def _calcular_diferencias(emp: EmpresaRecord, sun: SunatRecord, es_compras: bool
     """Compara un par empresa↔SUNAT y devuelve las diferencias campo por campo."""
     diffs: list[DifferenceDetail] = []
 
-    def _cmp_num(campo: str, v_emp: float, v_sun: float, tol: float = 0.01, nd: int = 2):
+    # Una diferencia solo cuenta si supera la tolerancia (por debajo es redondeo):
+    # IGV > S/ 1 (TOL_IGV), demás montos > S/ 3 (TOL_MONTO). Es el default del helper.
+    def _cmp_num(campo: str, v_emp: float, v_sun: float, tol: float = TOL_MONTO, nd: int = 2):
         d = round(v_emp - v_sun, nd)
         if abs(d) > tol:
             diffs.append(DifferenceDetail(campo, v_emp, v_sun, d))
@@ -211,14 +215,14 @@ def _calcular_diferencias(emp: EmpresaRecord, sun: SunatRecord, es_compras: bool
         diffs.append(DifferenceDetail("fecha", emp.fecha_emision, sun.fecha_emision, None))
 
     _cmp_num("base_imponible", emp.base_imponible, sun.base_imponible)
-    _cmp_num("igv", emp.igv, sun.igv)
+    _cmp_num("igv", emp.igv, sun.igv, tol=TOL_IGV)
     _cmp_num("importe_total", emp.importe_total, sun.importe_total)
 
     if es_compras:
         _cmp_num("bi_dgng", emp.bi_dgng, sun.bi_dgng)
-        _cmp_num("igv_dgng", emp.igv_dgng, sun.igv_dgng)
+        _cmp_num("igv_dgng", emp.igv_dgng, sun.igv_dgng, tol=TOL_IGV)
         _cmp_num("bi_dng", emp.bi_dng, sun.bi_dng)
-        _cmp_num("igv_dng", emp.igv_dng, sun.igv_dng)
+        _cmp_num("igv_dng", emp.igv_dng, sun.igv_dng, tol=TOL_IGV)
         _cmp_num("valor_adq_ng", emp.valor_adq_ng, sun.valor_adq_ng)
         if emp.moneda and sun.moneda and emp.moneda.strip().upper() != sun.moneda.strip().upper():
             diffs.append(DifferenceDetail("moneda", emp.moneda, sun.moneda, None))

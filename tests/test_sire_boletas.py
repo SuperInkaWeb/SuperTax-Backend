@@ -110,6 +110,36 @@ def test_solo_en_un_lado():
     assert solo_sun[0].estado == BOLETA_SOLO_SUNAT
 
 
+# ── Tolerancias de comparación (IGV > S/1, montos > S/3) ────────────────
+
+def test_tolerancia_igv_menor_a_1_cuadra():
+    res = comparar_boletas([_emp("B001", 100.0, base=500.0)],
+                           [_sun("B001", 100.5, base=500.0)])   # IGV difiere 0.50 (< 1)
+    assert res[0].estado == BOLETA_CUADRA
+
+
+def test_tolerancia_monto_menor_a_3_cuadra():
+    res = comparar_boletas([_emp("B001", 100.0, base=500.0)],
+                           [_sun("B001", 100.0, base=502.0)])   # base difiere 2.00 (< 3)
+    assert res[0].estado == BOLETA_CUADRA
+
+
+def test_tolerancia_monto_mayor_a_3_difiere_sin_alerta_roja():
+    res = comparar_boletas([_emp("B001", 100.0, base=500.0)],
+                           [_sun("B001", 100.0, base=505.0)])   # base difiere 5.00 (> 3)
+    assert res[0].estado == BOLETA_DIFIERE
+    assert "base" in res[0].campos_diferentes
+    assert res[0].es_alerta_roja is False                        # el IGV no cambió
+
+
+def test_tolerancia_factura_igv_menor_a_1_va_a_d():
+    emp = [_emp("F001", 100.0, base=500.0, importe=600.0, tipo="01", numero="1")]
+    sun = [_sun("F001", 100.5, base=500.0, importe=600.0, tipo="01", numero="1")]
+    out = reconcile(emp, sun, "ventas", None, periodo="202608")
+    assert any(r.tipo_cdp == "01" for r in out.scenario_d)       # cuadra: va a D
+    assert all(r.tipo_cdp != "01" for r in out.scenario_c)       # no a C
+
+
 # ── Integración con el motor ────────────────────────────────────────────
 
 def test_reconcile_boletas_van_a_abcd_y_al_detalle():

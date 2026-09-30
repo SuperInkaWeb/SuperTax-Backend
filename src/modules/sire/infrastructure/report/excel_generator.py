@@ -346,6 +346,12 @@ def generate_excel(
                 f"descargable del Escenario {etiqueta}.",
             ))
 
+    notas.append((
+        "Tolerancia de comparación",
+        "Una diferencia se reporta solo si supera S/ 1.00 en el IGV o S/ 3.00 en las "
+        "demás columnas de montos; por debajo se considera redondeo y el comprobante cuadra.",
+    ))
+
     if notas:
         r += 1
         ws.cell(row=r, column=2, value="NOTAS").font = SECTION_FONT
