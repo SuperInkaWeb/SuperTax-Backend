@@ -262,6 +262,8 @@ def test_correlatividad_numeracion_irregular_no_lista_millones():
     res = detectar_correlatividad(recs)
     assert len(res) == 1
     assert "irregular" in res[0].faltantes
+    assert "7,000,141" in res[0].faltantes and "70,000,140" in res[0].faltantes  # rango global
+    assert "2 registros" in res[0].faltantes                                     # conteo
     assert res[0].cantidad > 500
 
 

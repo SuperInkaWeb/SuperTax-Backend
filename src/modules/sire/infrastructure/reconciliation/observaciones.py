@@ -25,7 +25,6 @@ _TIPOS_CORRELATIVIDAD = {"03", "07"}
 # se vuelcan miles/millones de números y se distingue de huecos reales.
 _GAP_IRREGULAR = 10_000
 _MAX_LISTAR = 1_000
-_IRREGULAR = "numeración irregular — revisar la serie manualmente"
 
 
 @dataclass(slots=True)
@@ -106,7 +105,13 @@ def detectar_correlatividad(records) -> list[SerieFaltantes]:
         if total == 0:
             continue
         if max_tramo > _GAP_IRREGULAR or total > _MAX_LISTAR:
-            faltantes = _IRREGULAR
+            # Numeración irregular (salto enorme o demasiados huecos): en vez de
+            # listar miles de números, se muestra el rango global y el conteo para
+            # que se revise a mano.
+            n_min = min(r[0] for r in rangos)
+            n_max = max(r[1] for r in rangos)
+            faltantes = (f"numeración irregular (del {n_min:,} al {n_max:,}; "
+                         f"{len(rangos)} registros) — revisar manualmente")
         else:
             faltantes = _fmt_tramos(tramos)
         resultado.append(SerieFaltantes(tipo, serie, faltantes, total))
