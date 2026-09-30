@@ -211,6 +211,10 @@ def agregar_hoja_dashboard(wb, boletas) -> None:
     categorias = Reference(ws, min_col=2, min_row=9, max_col=1 + n_dias, max_row=9)
     grafico_dia.add_data(datos, titles_from_data=True, from_rows=True)
     grafico_dia.set_categories(categorias)
+    grafico_dia.x_axis.delete = False   # muestra las fechas debajo de las barras
+    grafico_dia.y_axis.delete = False   # muestra la escala de montos
+    grafico_dia.x_axis.title = "Día"
+    grafico_dia.y_axis.title = "IGV (S/)"
     ws.add_chart(grafico_dia, "A13")
 
     # Top series por diferencia (sobre «Datos series», ya ordenada).
@@ -224,6 +228,8 @@ def agregar_hoja_dashboard(wb, boletas) -> None:
     grafico_top.add_data(Reference(ser, min_col=5, min_row=1, max_row=1 + top), titles_from_data=True)
     grafico_top.set_categories(Reference(ser, min_col=1, min_row=2, max_row=1 + top))
     grafico_top.legend = None
+    grafico_top.x_axis.delete = False   # muestra la escala de diferencia
+    grafico_top.y_axis.delete = False   # muestra el nombre de cada serie
     ws.add_chart(grafico_top, "A28")
 
     # Anchos: A para etiquetas/Total PLE, TODAS las columnas de día para que los
