@@ -184,7 +184,9 @@ def test_dashboard_se_genera_con_desplegable_y_graficos():
     ws = wb["Dashboard"]
     assert len(ws.data_validations.dataValidation) == 1          # desplegable de serie
     assert len(ws._charts) == 2                                  # gráfico por día + top series
-    assert wb["Datos series"].sheet_state == "hidden"            # datos de apoyo ocultos
+    assert wb["Datos series"].sheet_state == "hidden"            # ranking/dropdown: apoyo oculto
+    assert wb["PLE por dia"].sheet_state == "visible"            # matriz serie×día visible
+    assert wb["SIRE por dia"].sheet_state == "visible"
 
 
 # ── Observaciones: correlatividad y duplicados ──────────────────────────

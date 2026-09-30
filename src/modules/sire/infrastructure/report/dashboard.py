@@ -19,10 +19,12 @@ _KPI_FONT = Font(bold=True, size=14)
 _HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 _HEADER_FONT = Font(color="FFFFFF", bold=True)
 _MONEDA = '"S/" #,##0.00'
+_NUM = "#,##0.00"
 
 _HOJA_SERIES = "Datos series"
-_HOJA_PLE = "Datos PLE dia"
-_HOJA_SIRE = "Datos SIRE dia"
+# Matrices serie×día visibles (equivalen a las hojas pivote PLE/SIRE del cliente).
+_HOJA_PLE = "PLE por dia"
+_HOJA_SIRE = "SIRE por dia"
 
 
 def _preparar(boletas):
@@ -57,11 +59,25 @@ def _hoja_series(wb, series, tot_ple, tot_sire):
 
 
 def _hoja_dia(wb, titulo, series, fechas, valores):
+    """Matriz VISIBLE serie×día del IGV (fila = serie, columna = día) + Total, como
+    las hojas pivote PLE/SIRE del cliente. La cabecera va en la fila 1 y los datos
+    desde la fila 2 (el Dashboard busca por serie con MATCH, sin depender del orden)."""
     ws = wb.create_sheet(titulo)
-    ws.append(["Serie", *fechas])
+    ws.append(["Serie", *fechas, "Total"])
     for s in series:
-        ws.append([s, *[round(valores.get((s, f), 0.0), 2) for f in fechas]])
-    ws.sheet_state = "hidden"
+        vals = [round(valores.get((s, f), 0.0), 2) for f in fechas]
+        ws.append([s, *vals, round(sum(vals), 2)])
+
+    for celda in ws[1]:
+        celda.fill = _HEADER_FILL
+        celda.font = _HEADER_FONT
+        celda.alignment = Alignment(horizontal="center")
+    ws.freeze_panes = "B2"
+    ws.column_dimensions["A"].width = 10
+    for col in range(2, len(fechas) + 3):          # días + columna Total
+        ws.column_dimensions[get_column_letter(col)].width = 11
+        for fila in range(2, len(series) + 2):
+            ws.cell(row=fila, column=col).number_format = _NUM
     return ws
 
 
@@ -73,8 +89,11 @@ def agregar_hoja_dashboard(wb, boletas) -> None:
 
     fechas, series, tot_ple, tot_sire, ple_sf, sire_sf = _preparar(boletas)
     _hoja_series(wb, series, tot_ple, tot_sire)
-    _hoja_dia(wb, _HOJA_PLE, series, fechas, ple_sf)
-    _hoja_dia(wb, _HOJA_SIRE, series, fechas, sire_sf)
+    # Las matrices visibles se ordenan por serie (más fácil de hojear); el
+    # Dashboard busca por MATCH, así que el orden no afecta sus fórmulas.
+    series_ordenadas = sorted(series)
+    _hoja_dia(wb, _HOJA_PLE, series_ordenadas, fechas, ple_sf)
+    _hoja_dia(wb, _HOJA_SIRE, series_ordenadas, fechas, sire_sf)
 
     lr = len(series) + 1          # última fila con datos en «Datos series»
     n_dias = len(fechas)
