@@ -120,13 +120,13 @@ def _agregar_hoja_boletas(wb, boletas) -> None:
 
 
 def _agregar_hoja_observaciones(wb, correlatividad, duplicados) -> None:
-    """Hoja «Observaciones»: notas de crédito con numeración faltante y
-    comprobantes duplicados (misma serie y número)."""
+    """Hoja «Observaciones»: boletas y notas de crédito con numeración faltante
+    y comprobantes duplicados (misma serie y número)."""
     ws = wb.create_sheet("Observaciones")
     ws.sheet_view.showGridLines = False
     r = 1
 
-    ws.cell(row=r, column=1, value="Notas de crédito con numeración faltante").font = SECTION_FONT
+    ws.cell(row=r, column=1, value="Boletas y notas de crédito con numeración faltante").font = SECTION_FONT
     r += 1
     if correlatividad:
         _set_header_row(ws, ["Tipo", "Serie", "Números faltantes", "Cantidad"], row=r)
