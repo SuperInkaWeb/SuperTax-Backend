@@ -180,7 +180,8 @@ def test_dashboard_se_genera_con_desplegable_y_graficos():
         propuesta_generada=datetime.now(timezone.utc),
     )
     wb = load_workbook(BytesIO(xlsx))
-    assert wb.sheetnames[0] == "Dashboard"                       # primera pestaña
+    assert wb.sheetnames[0] == "Resumen"                         # Resumen primero
+    assert wb.sheetnames[1] == "Dashboard"                       # Dashboard segundo
     ws = wb["Dashboard"]
     assert len(ws.data_validations.dataValidation) == 1          # desplegable de serie
     assert len(ws._charts) == 2                                  # gráfico por día + top series

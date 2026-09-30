@@ -141,7 +141,7 @@ def agregar_hoja_dashboard(wb, boletas) -> None:
     lr = len(series) + 1          # última fila con datos en «Datos series»
     n_dias = len(fechas)
     ultima_col_dia = get_column_letter(1 + n_dias)
-    ws = wb.create_sheet("Dashboard", 0)   # primera pestaña
+    ws = wb.create_sheet("Dashboard", 1)   # tras el Resumen (índice 0)
     ws.sheet_view.showGridLines = False
 
     ws.merge_cells("A1:H1")
