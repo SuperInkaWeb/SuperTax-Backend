@@ -188,6 +188,10 @@ def test_dashboard_se_genera_con_desplegable_y_graficos():
     assert wb["PLE por dia"].sheet_state == "visible"            # matriz serie×día visible
     assert wb["SIRE por dia"].sheet_state == "visible"
     assert "Diferencias por dia" in wb.sheetnames                # matriz de diferencias
+    assert any(                                                  # guía de hojas en Resumen
+        c == "GUÍA DE HOJAS"
+        for fila in wb["Resumen"].iter_rows(values_only=True) for c in fila
+    )
 
 
 # ── Observaciones: correlatividad y duplicados ──────────────────────────

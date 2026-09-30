@@ -355,6 +355,25 @@ def generate_excel(
             ws.cell(row=r, column=3, value=detalle).font = NOTE_FONT
             r += 1
 
+    # Guía de hojas (solo ventas con boletas, que es cuando existen esas pestañas).
+    if tipo_libro != "compras" and output.boletas_agregadas:
+        r += 1
+        ws.cell(row=r, column=2, value="GUÍA DE HOJAS").font = SECTION_FONT
+        r += 1
+        guia = [
+            ("A – D", "Comprobantes documento a documento: facturas y notas de crédito, más las boletas agregadas como «Boletas del día»."),
+            ("Cruce boletas", "Boletas comparadas por serie y día (lista): IGV de cada lado, diferencia y estado (cuadra / difiere / solo en un lado)."),
+            ("PLE por dia", "IGV de las boletas que TÚ declaraste, por serie (filas) y día (columnas)."),
+            ("SIRE por dia", "IGV de las boletas que tiene SUNAT, por serie y día."),
+            ("Diferencias por dia", "Resta PLE − SIRE por serie y día; resalta en ámbar donde no cuadra."),
+            ("Dashboard", "Vista interactiva: elige una serie y ve sus KPIs, su detalle diario y el top de series con mayor diferencia."),
+            ("Observaciones", "Números de boletas y notas de crédito faltantes (correlatividad) y comprobantes duplicados."),
+        ]
+        for hoja, desc in guia:
+            ws.cell(row=r, column=2, value=hoja).font = BOLD
+            ws.cell(row=r, column=3, value=desc).font = NOTE_FONT
+            r += 1
+
     ws.column_dimensions["A"].width = 3
     ws.column_dimensions["B"].width = 38
     ws.column_dimensions["C"].width = 22
