@@ -18,6 +18,8 @@ _LABEL_FONT = Font(bold=True, color="1F4E78")
 _KPI_FONT = Font(bold=True, size=14)
 _HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 _HEADER_FONT = Font(color="FFFFFF", bold=True)
+_DIFF_FILL = PatternFill("solid", fgColor="FFD966")   # celda con diferencia (≠ 0)
+_BOLD = Font(bold=True)
 _MONEDA = '"S/" #,##0.00'
 _NUM = "#,##0.00"
 
@@ -81,6 +83,46 @@ def _hoja_dia(wb, titulo, series, fechas, valores):
     return ws
 
 
+def _hoja_diferencias(wb, series, fechas, ple_sf, sire_sf):
+    """Matriz serie×día de la diferencia PLE − SIRE, resaltando las celdas que no
+    cuadran. Solo incluye las series que tienen alguna diferencia (foco puro)."""
+    filas = []
+    for s in series:
+        difs = [round(ple_sf.get((s, f), 0.0) - sire_sf.get((s, f), 0.0), 2) for f in fechas]
+        if sum(abs(d) for d in difs) > 0.01:
+            filas.append((s, difs, round(sum(difs), 2)))
+    filas.sort(key=lambda x: -sum(abs(d) for d in x[1]))   # más descuadre primero
+
+    ws = wb.create_sheet("Diferencias por dia")
+    ws.append(["Serie", *fechas, "Total"])
+    for celda in ws[1]:
+        celda.fill = _HEADER_FILL
+        celda.font = _HEADER_FONT
+        celda.alignment = Alignment(horizontal="center")
+
+    if not filas:
+        ws["A2"] = "Sin diferencias por serie y día — todo cuadra."
+        ws.column_dimensions["A"].width = 14
+        return ws
+
+    col_total = len(fechas) + 2
+    for fila_idx, (s, difs, total) in enumerate(filas, 2):
+        ws.append([s, *difs, total])
+        for col_idx in range(2, col_total + 1):
+            celda = ws.cell(row=fila_idx, column=col_idx)
+            celda.number_format = _NUM
+            valor = celda.value
+            if isinstance(valor, (int, float)) and abs(valor) > 0.01:
+                celda.fill = _DIFF_FILL      # solo se pinta donde NO cuadra
+                celda.font = _BOLD
+
+    ws.freeze_panes = "B2"
+    ws.column_dimensions["A"].width = 10
+    for col in range(2, col_total + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 11
+    return ws
+
+
 def agregar_hoja_dashboard(wb, boletas) -> None:
     """Crea la hoja «Dashboard» (y sus hojas de datos ocultas) a partir de las
     boletas ya cruzadas por serie+día. No hace nada si no hay boletas."""
@@ -94,6 +136,7 @@ def agregar_hoja_dashboard(wb, boletas) -> None:
     series_ordenadas = sorted(series)
     _hoja_dia(wb, _HOJA_PLE, series_ordenadas, fechas, ple_sf)
     _hoja_dia(wb, _HOJA_SIRE, series_ordenadas, fechas, sire_sf)
+    _hoja_diferencias(wb, series, fechas, ple_sf, sire_sf)
 
     lr = len(series) + 1          # última fila con datos en «Datos series»
     n_dias = len(fechas)

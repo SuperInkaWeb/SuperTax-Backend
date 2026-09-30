@@ -187,6 +187,7 @@ def test_dashboard_se_genera_con_desplegable_y_graficos():
     assert wb["Datos series"].sheet_state == "hidden"            # ranking/dropdown: apoyo oculto
     assert wb["PLE por dia"].sheet_state == "visible"            # matriz serie×día visible
     assert wb["SIRE por dia"].sheet_state == "visible"
+    assert "Diferencias por dia" in wb.sheetnames                # matriz de diferencias
 
 
 # ── Observaciones: correlatividad y duplicados ──────────────────────────
