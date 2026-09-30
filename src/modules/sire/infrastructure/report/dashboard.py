@@ -226,6 +226,11 @@ def agregar_hoja_dashboard(wb, boletas) -> None:
     grafico_top.legend = None
     ws.add_chart(grafico_top, "A28")
 
-    ws.column_dimensions["A"].width = 20
-    for col in "BCDEFGH":
-        ws.column_dimensions[col].width = 14
+    # Anchos: A para etiquetas/Total PLE, TODAS las columnas de día para que los
+    # montos no salgan «#########», y las columnas de KPI (C/E/G) algo más anchas
+    # porque sus totales pueden ser de millones.
+    ws.column_dimensions["A"].width = 18
+    for j in range(n_dias):
+        ws.column_dimensions[get_column_letter(2 + j)].width = 14
+    for col in ("C", "E", "G"):
+        ws.column_dimensions[col].width = 16
