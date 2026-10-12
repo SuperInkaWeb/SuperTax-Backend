@@ -7,12 +7,24 @@ El filtrado y la descarga llegan en la Fase 3.
 """
 import os
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
-from src.modules.datafilter.api.schemas import DatasetDetail, DatasetSummary
+from src.modules.datafilter.api.schemas import (
+    DatasetDetail,
+    DatasetSummary,
+    DistinctValuesResponse,
+    DownloadFormat,
+    DownloadRequest,
+    PreviewRequest,
+    PreviewResponse,
+)
+from src.modules.datafilter.application import query
 from src.modules.datafilter.infrastructure import storage_access
 from src.modules.datafilter.infrastructure.ingest_dispatch import encolar_ingesta
+from src.modules.datafilter.infrastructure.query_builder import InvalidFilterError
 from src.modules.datafilter.infrastructure.repositories import SqlDatasetRepository
 from src.platform.authorization.deps import require_module, require_permission
 from src.platform.database.session import get_db
@@ -88,3 +100,94 @@ async def subir_dataset(
 
     encolar_ingesta(ds.id)
     return DatasetSummary.from_model(ds)
+
+
+def _http(exc: Exception) -> HTTPException:
+    """Traduce los errores del servicio de filtrado a respuestas HTTP."""
+    if isinstance(exc, query.DatasetNotFound):
+        return HTTPException(status.HTTP_404_NOT_FOUND, detail="Dataset no encontrado")
+    if isinstance(exc, query.DatasetNotReady):
+        return HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"El dataset aún no está listo (estado: {exc.status}).",
+        )
+    if isinstance(exc, (InvalidFilterError, query.DownloadTooLarge)):
+        return HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    raise exc
+
+
+# Endpoints SÍNCRONOS a propósito: la consulta DuckDB (sobre R2) es bloqueante y puede
+# tardar; con `def`, FastAPI la corre en su threadpool y el event loop sigue libre.
+@router.post("/datasets/{dataset_id}/preview", response_model=PreviewResponse)
+def previsualizar(
+    dataset_id: int,
+    request: PreviewRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> PreviewResponse:
+    """Una página de filas que cumplen el filtro + total de coincidencias."""
+    try:
+        columns, rows, total = query.preview(
+            db, dataset_id, ctx.company.id,
+            filtro=request.filter, seleccion=request.select, orden=request.sort,
+            limit=request.limit, offset=request.offset, search=request.search,
+        )
+    except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError) as exc:
+        raise _http(exc) from exc
+    return PreviewResponse(
+        columns=columns, rows=rows, total_matched=total,
+        limit=request.limit, offset=request.offset,
+    )
+
+
+@router.get(
+    "/datasets/{dataset_id}/columns/{column}/distinct", response_model=DistinctValuesResponse
+)
+def valores_distintos(
+    dataset_id: int,
+    column: str,
+    search: str | None = Query(default=None, max_length=200),
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> DistinctValuesResponse:
+    """Valores únicos de una columna, para el filtro tipo Excel (casillas)."""
+    try:
+        values, truncated = query.distinct_values(db, dataset_id, ctx.company.id, column, search)
+    except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError) as exc:
+        raise _http(exc) from exc
+    return DistinctValuesResponse(column=column, values=values, truncated=truncated)
+
+
+@router.post("/datasets/{dataset_id}/download")
+def descargar(
+    dataset_id: int,
+    body: DownloadRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Aplica el filtro, escribe el resultado en un temporal y lo transmite (CSV/TXT/XLSX)."""
+    delimiter = body.delimiter.char if body.format is DownloadFormat.TXT else None
+    try:
+        ruta, media_type, nombre = query.build_export(
+            db, dataset_id, ctx.company.id,
+            filtro=body.filter, seleccion=body.select, orden=body.sort, search=body.search,
+            formato=body.format.value, delimiter_char=delimiter,
+        )
+    except (query.DatasetNotFound, query.DatasetNotReady, query.DownloadTooLarge,
+            InvalidFilterError) as exc:
+        raise _http(exc) from exc
+    return FileResponse(
+        path=ruta, media_type=media_type, filename=nombre,
+        background=BackgroundTask(os.remove, ruta),  # borra el temporal tras enviarlo
+    )
+
+
+@router.delete("/datasets/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_dataset(
+    dataset_id: int,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.delete")),
+    db: Session = Depends(get_db),
+) -> None:
+    """Borra el dataset y sus archivos (crudo + Parquet) de la empresa activa."""
+    if not query.eliminar(db, dataset_id, ctx.company.id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Dataset no encontrado")

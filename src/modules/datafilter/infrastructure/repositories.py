@@ -38,6 +38,12 @@ class SqlDatasetRepository:
         )
         return self.db.scalar(stmt)
 
+    def delete(self, dataset_id: int, company_id: int) -> None:
+        ds = self.get(dataset_id, company_id)
+        if ds is not None:
+            self.db.delete(ds)
+            self.db.commit()
+
     # ── Alta y subida ────────────────────────────────────────────────────
 
     def create(

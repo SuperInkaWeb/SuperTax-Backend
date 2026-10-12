@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     # vez en el web; cada una en un subproceso efímero. El resto espera turno, así
     # subir muchos archivos nunca desborda la RAM.
     DATAFILTER_MAX_CONCURRENCY: int = 1
+    # Tope de filas que una descarga filtrada puede generar (defensa A04 / costo).
+    DATAFILTER_MAX_DOWNLOAD_ROWS: int = 5_000_000
     # Guardas de memoria de DuckDB (anti-OOM en contenedor, ve la RAM del host):
     # límite de RAM por conexión (vacío = default de DuckDB) y carpeta de volcado
     # a disco al superarlo (vacío → temporal del SO).
