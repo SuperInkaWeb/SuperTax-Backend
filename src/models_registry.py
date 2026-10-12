@@ -12,6 +12,7 @@ Vive a nivel de `src` (no dentro de `platform/`) porque referencia los módulos,
 el núcleo nunca debe depender de los módulos.
 """
 # Todos los modelos (núcleo + módulos); el import registra sus tablas.
+from src.modules.datafilter.infrastructure import models as _datafilter  # noqa: F401
 from src.modules.scanner.infrastructure import models as _scanner  # noqa: F401
 from src.modules.sire.infrastructure import models as _sire  # noqa: F401
 from src.modules.sunat.infrastructure import models as _sunat  # noqa: F401
