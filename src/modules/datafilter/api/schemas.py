@@ -34,3 +34,26 @@ class DatasetSummary(BaseModel):
             created_at=m.created_at,
             error=m.error,
         )
+
+
+class DatasetDetail(DatasetSummary):
+    """Detalle con el esquema de columnas y las hojas (si es Excel multi-hoja)."""
+    columns: list[ColumnInfo] = []
+    sheets: list[str] = []
+    active_sheet: str | None = None
+
+    @classmethod
+    def from_model(cls, m: DatasetModel) -> "DatasetDetail":
+        return cls(
+            id=m.id,
+            original_filename=m.original_filename,
+            status=m.status,
+            origin=m.origin,
+            row_count=m.row_count,
+            size_bytes=m.size_bytes,
+            created_at=m.created_at,
+            error=m.error,
+            columns=[ColumnInfo(**c) for c in (m.columns or [])],
+            sheets=list(m.sheets or []),
+            active_sheet=m.active_sheet,
+        )

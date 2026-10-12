@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     # Igual para el Scanner: cuántas extracciones OCR corren a la vez en el web
     # (on-demand). El OCR es CPU-bound; ajústalo a los núcleos/RAM del web.
     SCANNER_MAX_CONCURRENCY: int = 2
+    # DataFilter: cuántas ingestas (conversión a Parquet con DuckDB) corren a la
+    # vez en el web; cada una en un subproceso efímero. El resto espera turno, así
+    # subir muchos archivos nunca desborda la RAM.
+    DATAFILTER_MAX_CONCURRENCY: int = 1
+    # Guardas de memoria de DuckDB (anti-OOM en contenedor, ve la RAM del host):
+    # límite de RAM por conexión (vacío = default de DuckDB) y carpeta de volcado
+    # a disco al superarlo (vacío → temporal del SO).
+    DUCKDB_MEMORY_LIMIT: str = ""
+    DUCKDB_TEMP_DIR: str = ""
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""

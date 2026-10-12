@@ -1,5 +1,6 @@
 """Descriptor del módulo DataFilter: contrato de auto-registro."""
 from src.modules.datafilter.api.routes import router
+from src.modules.datafilter.infrastructure.ingest_dispatch import recuperar_pendientes
 from src.platform.modularity import ModuleDescriptor
 
 DATAFILTER_PERMISSIONS = (
@@ -13,4 +14,5 @@ descriptor = ModuleDescriptor(
     name="DataFilter — análisis de archivos",
     router=router,
     permissions=DATAFILTER_PERMISSIONS,
+    on_startup=recuperar_pendientes,
 )

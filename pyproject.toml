@@ -63,6 +63,7 @@ extend-exclude = [
     "src/modules/sunat/infrastructure/automation",
     "src/modules/scanner/infrastructure/utils",
     "src/modules/scanner/infrastructure/extractor",
+    "src/modules/datafilter/infrastructure/duckdb_engine.py",
 ]
 
 [tool.ruff.lint]
