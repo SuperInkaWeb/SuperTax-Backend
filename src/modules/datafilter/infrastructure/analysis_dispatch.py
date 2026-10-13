@@ -12,6 +12,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 from src.modules.datafilter.application import analysis
 from src.modules.datafilter.application.ingest import friendly_error
+from src.modules.datafilter.infrastructure import heavy
 from src.modules.datafilter.infrastructure.repositories import SqlDatasetRepository
 from src.platform.config.settings import settings
 from src.platform.database.session import SessionLocal
@@ -45,7 +46,8 @@ def _procesar(new_id: int, source_id: int, company_id: int, spec: dict) -> None:
         db.close()
 
     try:
-        result = _en_subproceso(payload)
+        with heavy.gate():  # cupo global compartido con ingesta/análisis
+            result = _en_subproceso(payload)
     except Exception as exc:  # el hijo falló o murió (OOM) → FAILED con mensaje corto
         logger.exception("Materialización del dataset %s falló", new_id)
         _marcar_fallido(new_id, friendly_error(exc))
@@ -57,6 +59,7 @@ def _procesar(new_id: int, source_id: int, company_id: int, spec: dict) -> None:
         logger.info("Dataset derivado %s listo (%s filas)", new_id, result["row_count"])
     finally:
         db.close()
+    heavy.log_rss(f"materializacion {new_id}")
 
 
 def _marcar_fallido(new_id: int, error: str) -> None:

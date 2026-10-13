@@ -17,6 +17,7 @@ import ctypes.util
 import logging
 import os
 import tempfile
+import threading
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -68,6 +69,10 @@ _XLSX_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 class ColumnInfo:
     name: str
     type: str
+
+
+class QueryTimeout(Exception):
+    """La consulta superó DATAFILTER_QUERY_TIMEOUT_SECONDS y se interrumpió."""
 
 
 class EncodingNotSupported(Exception):
@@ -178,14 +183,33 @@ def _connect() -> duckdb.DuckDBPyConnection:
 
 @contextmanager
 def _session():
-    """Conexión DuckDB que, al cerrarse, devuelve su RAM al SO (malloc_trim).
+    """Conexión DuckDB con guardas: corta la consulta si supera el timeout y, al
+    cerrarse, devuelve su RAM al SO (malloc_trim).
 
-    Así la RSS del proceso baja tras cada consulta: el web no queda inflado al
-    navegar archivos grandes, y en idle vuelve a la base."""
+    - Timeout: un temporizador llama `con.interrupt()` si la operación tarda de más;
+      la consulta en curso aborta y se eleva `QueryTimeout`.
+    - RAM: al cerrar la conexión, `malloc_trim` baja la RSS → el web no queda inflado
+      al navegar archivos grandes y en idle vuelve a la base."""
     con = _connect()
+    disparado = threading.Event()
+    timer: threading.Timer | None = None
+    segundos = settings.DATAFILTER_QUERY_TIMEOUT_SECONDS
+    if segundos and segundos > 0:
+        def _cortar() -> None:
+            disparado.set()
+            con.interrupt()
+        timer = threading.Timer(segundos, _cortar)
+        timer.daemon = True
+        timer.start()
     try:
         yield con
+    except duckdb.Error as exc:
+        if disparado.is_set():
+            raise QueryTimeout(f"La consulta superó {segundos}s y se canceló.") from exc
+        raise
     finally:
+        if timer is not None:
+            timer.cancel()
         con.close()
         _release_memory()
 

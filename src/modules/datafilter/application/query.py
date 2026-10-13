@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from src.modules.datafilter.domain.filtering import FilterGroup, SortSpec
 from src.modules.datafilter.infrastructure import (
     duckdb_engine,
+    heavy,
     query_builder,
     storage_access,
 )
@@ -150,11 +151,13 @@ def build_export(
     order_sql = query_builder.build_order_by(orden, valid)
     parquet = locator_parquet(company_id, dataset_id)
 
-    matched = duckdb_engine.count_matches(parquet, where_sql, params)
-    ruta, media_type, nombre = preparar_destino_export(ds, formato, matched, "filtrado")
-    duckdb_engine.export_to_file(
-        parquet, select_sql, where_sql, order_sql, params, ruta, formato, delimiter_char
-    )
+    # Operación pesada (recorre todo el archivo): toma cupo del presupuesto global.
+    with heavy.gate():
+        matched = duckdb_engine.count_matches(parquet, where_sql, params)
+        ruta, media_type, nombre = preparar_destino_export(ds, formato, matched, "filtrado")
+        duckdb_engine.export_to_file(
+            parquet, select_sql, where_sql, order_sql, params, ruta, formato, delimiter_char
+        )
     return ruta, media_type, nombre
 
 

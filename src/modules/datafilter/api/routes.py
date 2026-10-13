@@ -24,6 +24,7 @@ from src.modules.datafilter.api.schemas import (
 )
 from src.modules.datafilter.application import query
 from src.modules.datafilter.infrastructure import storage_access
+from src.modules.datafilter.infrastructure.duckdb_engine import QueryTimeout
 from src.modules.datafilter.infrastructure.ingest_dispatch import encolar_ingesta
 from src.modules.datafilter.infrastructure.query_builder import InvalidFilterError
 from src.modules.datafilter.infrastructure.repositories import SqlDatasetRepository
@@ -154,6 +155,11 @@ def http_error(exc: Exception) -> HTTPException:
         )
     if isinstance(exc, (InvalidFilterError, query.DownloadTooLarge)):
         return HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if isinstance(exc, QueryTimeout):
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="La consulta tardó demasiado y se canceló. Aplica un filtro o reduce el rango.",
+        )
     raise exc
 
 
@@ -173,7 +179,7 @@ def previsualizar(
             filtro=request.filter, seleccion=request.select, orden=request.sort,
             limit=request.limit, offset=request.offset, search=request.search,
         )
-    except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError) as exc:
+    except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError, QueryTimeout) as exc:
         raise http_error(exc) from exc
     return PreviewResponse(
         columns=columns, rows=rows, total_matched=total,
@@ -194,7 +200,7 @@ def valores_distintos(
     """Valores únicos de una columna, para el filtro tipo Excel (casillas)."""
     try:
         values, truncated = query.distinct_values(db, dataset_id, ctx.company.id, column, search)
-    except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError) as exc:
+    except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError, QueryTimeout) as exc:
         raise http_error(exc) from exc
     return DistinctValuesResponse(column=column, values=values, truncated=truncated)
 
@@ -215,7 +221,7 @@ def descargar(
             formato=body.format.value, delimiter_char=delimiter,
         )
     except (query.DatasetNotFound, query.DatasetNotReady, query.DownloadTooLarge,
-            InvalidFilterError) as exc:
+            InvalidFilterError, QueryTimeout) as exc:
         raise http_error(exc) from exc
     return FileResponse(
         path=ruta, media_type=media_type, filename=nombre,

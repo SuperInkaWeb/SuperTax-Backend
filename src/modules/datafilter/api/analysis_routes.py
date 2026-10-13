@@ -37,6 +37,7 @@ from src.modules.datafilter.api.schemas import (
 )
 from src.modules.datafilter.application import analysis, query
 from src.modules.datafilter.infrastructure.analysis_dispatch import encolar_materializacion
+from src.modules.datafilter.infrastructure.duckdb_engine import QueryTimeout
 from src.modules.datafilter.infrastructure.models import DatasetOrigin
 from src.modules.datafilter.infrastructure.query_builder import InvalidFilterError
 from src.platform.authorization.deps import require_module, require_permission
@@ -47,7 +48,8 @@ router = APIRouter(tags=["datafilter"], dependencies=[Depends(require_module("da
 
 # Excepciones de negocio comunes a ver/descargar (el origen debe existir y estar listo).
 _ERRORES = (
-    query.DatasetNotFound, query.DatasetNotReady, query.DownloadTooLarge, InvalidFilterError,
+    query.DatasetNotFound, query.DatasetNotReady, query.DownloadTooLarge,
+    InvalidFilterError, QueryTimeout,
 )
 
 

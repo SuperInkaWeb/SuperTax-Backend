@@ -23,6 +23,7 @@ from src.modules.datafilter.infrastructure import (
     dedupe_builder,
     duckdb_engine,
     expression_builder,
+    heavy,
     pivot_builder,
     query_builder,
     replace_builder,
@@ -69,10 +70,11 @@ def run_compute(
     result_cols = valid | {c.name.strip() for c in columnas}
     order_sql = _orden(orden_col, orden_dir, result_cols)
     parquet = query.locator_parquet(company_id, dataset_id)
-    total = duckdb_engine.count_matches(parquet, where_sql, where_params)
-    cols, rows = duckdb_engine.preview(
-        parquet, select_sql, where_sql, order_sql, limit, offset, compute_params + where_params
-    )
+    with heavy.gate():  # pesada (recorre todo el archivo): cupo del presupuesto global
+        total = duckdb_engine.count_matches(parquet, where_sql, where_params)
+        cols, rows = duckdb_engine.preview(
+            parquet, select_sql, where_sql, order_sql, limit, offset, compute_params + where_params
+        )
     return cols, rows, total
 
 
@@ -87,12 +89,13 @@ def export_compute(
     where_sql, where_params = query_builder.build_where(filtro, valid)
     select_sql, compute_params = expression_builder.build_compute_select(columnas, valid)
     parquet = query.locator_parquet(company_id, dataset_id)
-    matched = duckdb_engine.count_matches(parquet, where_sql, where_params)
-    ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "columnas")
-    duckdb_engine.export_to_file(
-        parquet, select_sql, where_sql, "", compute_params + where_params,
-        ruta, formato, delimiter_char,
-    )
+    with heavy.gate():
+        matched = duckdb_engine.count_matches(parquet, where_sql, where_params)
+        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "columnas")
+        duckdb_engine.export_to_file(
+            parquet, select_sql, where_sql, "", compute_params + where_params,
+            ruta, formato, delimiter_char,
+        )
     return ruta, media, nombre
 
 
@@ -111,10 +114,11 @@ def run_replace(
     select_sql, params = replace_builder.build_replace_select(replacements, column_order, valid)
     order_sql = _orden(orden_col, orden_dir, valid)
     parquet = query.locator_parquet(company_id, dataset_id)
-    total = duckdb_engine.count_matches(parquet, where_sql, where_params)
-    cols, rows = duckdb_engine.preview(
-        parquet, select_sql, where_sql, order_sql, limit, offset, params + where_params
-    )
+    with heavy.gate():
+        total = duckdb_engine.count_matches(parquet, where_sql, where_params)
+        cols, rows = duckdb_engine.preview(
+            parquet, select_sql, where_sql, order_sql, limit, offset, params + where_params
+        )
     return cols, rows, total
 
 
@@ -130,11 +134,12 @@ def export_replace(
     column_order = [c["name"] for c in (ds.columns or [])]
     select_sql, params = replace_builder.build_replace_select(replacements, column_order, valid)
     parquet = query.locator_parquet(company_id, dataset_id)
-    matched = duckdb_engine.count_matches(parquet, where_sql, where_params)
-    ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "corregido")
-    duckdb_engine.export_to_file(
-        parquet, select_sql, where_sql, "", params + where_params, ruta, formato, delimiter_char
-    )
+    with heavy.gate():
+        matched = duckdb_engine.count_matches(parquet, where_sql, where_params)
+        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "corregido")
+        duckdb_engine.export_to_file(
+            parquet, select_sql, where_sql, "", params + where_params, ruta, formato, delimiter_char
+        )
     return ruta, media, nombre
 
 
@@ -152,11 +157,14 @@ def run_dedupe(
     select_sql, qualify_sql = dedupe_builder.build_dedupe(key_columns, valid)
     order_sql = _orden(orden_col, orden_dir, valid)
     parquet = query.locator_parquet(company_id, dataset_id)
-    original = duckdb_engine.count_matches(parquet, where_sql, where_params)
-    total = duckdb_engine.dedupe_count(parquet, select_sql, where_sql, qualify_sql, where_params)
-    cols, rows = duckdb_engine.dedupe_preview(
-        parquet, select_sql, where_sql, qualify_sql, where_params, limit, offset, order_sql
-    )
+    with heavy.gate():
+        original = duckdb_engine.count_matches(parquet, where_sql, where_params)
+        total = duckdb_engine.dedupe_count(
+            parquet, select_sql, where_sql, qualify_sql, where_params
+        )
+        cols, rows = duckdb_engine.dedupe_preview(
+            parquet, select_sql, where_sql, qualify_sql, where_params, limit, offset, order_sql
+        )
     return cols, rows, total, original
 
 
@@ -171,11 +179,14 @@ def export_dedupe(
     where_sql, where_params = query_builder.build_where(filtro, valid)
     select_sql, qualify_sql = dedupe_builder.build_dedupe(key_columns, valid)
     parquet = query.locator_parquet(company_id, dataset_id)
-    matched = duckdb_engine.dedupe_count(parquet, select_sql, where_sql, qualify_sql, where_params)
-    ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "sin_duplicados")
-    duckdb_engine.dedupe_export_to_file(
-        parquet, select_sql, where_sql, qualify_sql, where_params, ruta, formato, delimiter_char
-    )
+    with heavy.gate():
+        matched = duckdb_engine.dedupe_count(
+            parquet, select_sql, where_sql, qualify_sql, where_params
+        )
+        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "sin_duplicados")
+        duckdb_engine.dedupe_export_to_file(
+            parquet, select_sql, where_sql, qualify_sql, where_params, ruta, formato, delimiter_char
+        )
     return ruta, media, nombre
 
 
@@ -193,11 +204,12 @@ def run_stats(
     where_sql, where_params = query_builder.build_where(filtro, valid)
     parquet = query.locator_parquet(company_id, dataset_id)
 
-    row = duckdb_engine.column_stats(parquet, column_sql, where_sql, where_params, numeric)
+    with heavy.gate():
+        row = duckdb_engine.column_stats(parquet, column_sql, where_sql, where_params, numeric)
+        top = duckdb_engine.column_top_values(
+            parquet, column_sql, where_sql, where_params, _STATS_TOP_LIMIT
+        )
     total, non_null, distinct = int(row[0]), int(row[1]), int(row[2])
-    top = duckdb_engine.column_top_values(
-        parquet, column_sql, where_sql, where_params, _STATS_TOP_LIMIT
-    )
     return {
         "column": column,
         "is_numeric": numeric,
@@ -237,17 +249,18 @@ def run_pivot(
         spec, valid, numeric, pivot_values
     )
     parquet = query.locator_parquet(company_id, dataset_id)
-    total = duckdb_engine.pivot_count(parquet, group_cols_sql, where_sql, where_params)
-    cols, rows = duckdb_engine.pivot_preview(
-        parquet, select_sql, group_cols_sql, where_sql, params + where_params,
-        limit, offset, order_sql,
-    )
     totals_select, totals_params = pivot_builder.build_pivot_totals(
         spec, valid, numeric, pivot_values
     )
-    totals = duckdb_engine.pivot_totals(
-        parquet, totals_select, where_sql, totals_params + where_params
-    )
+    with heavy.gate():
+        total = duckdb_engine.pivot_count(parquet, group_cols_sql, where_sql, where_params)
+        cols, rows = duckdb_engine.pivot_preview(
+            parquet, select_sql, group_cols_sql, where_sql, params + where_params,
+            limit, offset, order_sql,
+        )
+        totals = duckdb_engine.pivot_totals(
+            parquet, totals_select, where_sql, totals_params + where_params
+        )
     return cols, rows, total, totals
 
 
@@ -263,12 +276,13 @@ def export_pivot(
         spec, valid, numeric, pivot_values
     )
     parquet = query.locator_parquet(company_id, dataset_id)
-    matched = duckdb_engine.pivot_count(parquet, group_cols_sql, where_sql, where_params)
-    ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "reporte")
-    duckdb_engine.pivot_export_to_file(
-        parquet, select_sql, group_cols_sql, where_sql, params + where_params,
-        ruta, formato, delimiter_char, order_sql,
-    )
+    with heavy.gate():
+        matched = duckdb_engine.pivot_count(parquet, group_cols_sql, where_sql, where_params)
+        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "reporte")
+        duckdb_engine.pivot_export_to_file(
+            parquet, select_sql, group_cols_sql, where_sql, params + where_params,
+            ruta, formato, delimiter_char, order_sql,
+        )
     return ruta, media, nombre
 
 

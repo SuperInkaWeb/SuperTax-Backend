@@ -11,7 +11,7 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 
 from src.modules.datafilter.application.ingest import convertir, friendly_error
-from src.modules.datafilter.infrastructure import duckdb_engine
+from src.modules.datafilter.infrastructure import duckdb_engine, heavy
 from src.modules.datafilter.infrastructure.repositories import SqlDatasetRepository
 from src.platform.config.settings import settings
 from src.platform.database.session import SessionLocal
@@ -50,7 +50,8 @@ def _procesar(dataset_id: int) -> None:
         "sheet": active_sheet,
     }
     try:
-        result = _en_subproceso(payload)
+        with heavy.gate():  # cupo global compartido con materialización/análisis
+            result = _en_subproceso(payload)
     except Exception as exc:  # el hijo falló o murió (OOM) → FAILED con mensaje corto
         logger.exception("Ingesta del dataset %s falló", dataset_id)
         db = SessionLocal()
@@ -66,6 +67,7 @@ def _procesar(dataset_id: int) -> None:
         logger.info("Ingesta OK: dataset %s (%s filas)", dataset_id, result["row_count"])
     finally:
         db.close()
+    heavy.log_rss(f"ingesta {dataset_id}")
 
 
 def encolar_ingesta(dataset_id: int) -> None:
