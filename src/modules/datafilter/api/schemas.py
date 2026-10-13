@@ -86,6 +86,11 @@ class DistinctValuesResponse(BaseModel):
     truncated: bool   # true si hay más valores de los devueltos
 
 
+class SheetSelection(BaseModel):
+    """Hoja a usar al re-ingestar un Excel multi-hoja."""
+    sheet: str = Field(min_length=1, max_length=100)
+
+
 class DatasetDetail(DatasetSummary):
     """Detalle con el esquema de columnas y las hojas (si es Excel multi-hoja)."""
     columns: list[ColumnInfo] = []

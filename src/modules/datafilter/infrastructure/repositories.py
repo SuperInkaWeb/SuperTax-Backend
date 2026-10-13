@@ -92,6 +92,27 @@ class SqlDatasetRepository:
             ds.source_path = source_path
             self.db.commit()
 
+    def request_sheet_change(
+        self, dataset_id: int, company_id: int, sheet: str
+    ) -> DatasetModel | None:
+        """Marca un Excel multi-hoja para re-ingestarse con otra hoja (vuelve a `pending`).
+
+        Devuelve el dataset (para que la API re-encole la ingesta) o None si no existe.
+        Lanza ValueError si el dataset no es un Excel subido o la hoja no existe."""
+        ds = self.get(dataset_id, company_id)
+        if ds is None:
+            return None
+        if ds.origin != DatasetOrigin.uploaded.value or not ds.source_path:
+            raise ValueError("Solo los archivos Excel subidos permiten cambiar de hoja.")
+        if sheet not in (ds.sheets or []):
+            raise ValueError("La hoja indicada no existe en el archivo.")
+        ds.active_sheet = sheet
+        ds.status = DatasetStatus.pending.value
+        ds.error = None
+        self.db.commit()
+        self.db.refresh(ds)
+        return ds
+
     # ── Ingesta (estado) ─────────────────────────────────────────────────
 
     def claim(self, dataset_id: int) -> tuple[int, str, str | None] | None:

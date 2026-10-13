@@ -20,6 +20,7 @@ from src.modules.datafilter.api.schemas import (
     DownloadRequest,
     PreviewRequest,
     PreviewResponse,
+    SheetSelection,
 )
 from src.modules.datafilter.application import query
 from src.modules.datafilter.infrastructure import storage_access
@@ -100,6 +101,28 @@ async def subir_dataset(
 
     encolar_ingesta(ds.id)
     return DatasetSummary.from_model(ds)
+
+
+@router.post(
+    "/datasets/{dataset_id}/sheet",
+    response_model=DatasetDetail, status_code=status.HTTP_202_ACCEPTED,
+)
+def cambiar_hoja(
+    dataset_id: int,
+    body: SheetSelection,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.create")),
+    db: Session = Depends(get_db),
+) -> DatasetDetail:
+    """Re-ingesta un Excel multi-hoja usando otra hoja (vuelve a procesarse en 2º plano)."""
+    repo = SqlDatasetRepository(db)
+    try:
+        ds = repo.request_sheet_change(dataset_id, ctx.company.id, body.sheet)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if ds is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Dataset no encontrado")
+    encolar_ingesta(dataset_id)
+    return DatasetDetail.from_model(ds)
 
 
 def http_error(exc: Exception) -> HTTPException:
