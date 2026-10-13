@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from src.bootstrap import ensure_database_ready
 from src.module_registry import MODULES
 from src.platform.authorization.roles_api import router as roles_router
 from src.platform.config.settings import settings
@@ -47,8 +48,10 @@ _log = logging.getLogger("platform.startup")
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Al arrancar, deja que cada módulo recupere su estado (jobs interrumpidos /
+    """Al arrancar: asegura el esquema y el catálogo de módulos (migración + seed
+    idempotentes), y deja que cada módulo recupere su estado (jobs interrumpidos /
     encolados). Un fallo aquí no debe impedir que la API sirva salud/tráfico."""
+    ensure_database_ready()
     for module in MODULES:
         if module.on_startup is None:
             continue
