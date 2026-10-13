@@ -16,13 +16,14 @@ este módulo solo planifica el SQL y da el target picklable del hijo.
 from sqlalchemy.orm import Session
 
 from src.modules.datafilter.application import query
-from src.modules.datafilter.domain.analysis import ReplacementRule
+from src.modules.datafilter.domain.analysis import PivotSpec, ReplacementRule
 from src.modules.datafilter.domain.expressions import ComputedColumn
 from src.modules.datafilter.domain.filtering import FilterGroup, SortDirection, SortSpec
 from src.modules.datafilter.infrastructure import (
     dedupe_builder,
     duckdb_engine,
     expression_builder,
+    pivot_builder,
     query_builder,
     replace_builder,
 )
@@ -219,6 +220,90 @@ def _scalar(value: object) -> str | float | int | None:
     return str(value)
 
 
+# ── Tablas dinámicas (pivote) ────────────────────────────────────────────
+
+def run_pivot(
+    db: Session, dataset_id: int, company_id: int, *,
+    spec: PivotSpec, limit: int, offset: int,
+) -> tuple[list[str], list[dict], int, dict]:
+    """Ejecuta el pivote. Devuelve (columnas, filas, total_agrupado, fila_total_general).
+
+    La fila de Total general (métricas sobre todas las filas) es solo para fijarla al pie
+    de la vista previa; no se persiste ni se descarga."""
+    _, valid, numeric, where_sql, where_params, pivot_values = _pivot_context(
+        db, dataset_id, company_id, spec
+    )
+    select_sql, group_cols_sql, order_sql, params = pivot_builder.build_pivot(
+        spec, valid, numeric, pivot_values
+    )
+    parquet = query.locator_parquet(company_id, dataset_id)
+    total = duckdb_engine.pivot_count(parquet, group_cols_sql, where_sql, where_params)
+    cols, rows = duckdb_engine.pivot_preview(
+        parquet, select_sql, group_cols_sql, where_sql, params + where_params,
+        limit, offset, order_sql,
+    )
+    totals_select, totals_params = pivot_builder.build_pivot_totals(
+        spec, valid, numeric, pivot_values
+    )
+    totals = duckdb_engine.pivot_totals(
+        parquet, totals_select, where_sql, totals_params + where_params
+    )
+    return cols, rows, total, totals
+
+
+def export_pivot(
+    db: Session, dataset_id: int, company_id: int, *,
+    spec: PivotSpec, formato: str, delimiter_char: str | None,
+) -> tuple[str, str, str]:
+    """Descarga el reporte pivote COMPLETO como archivo. Devuelve (ruta, media, nombre)."""
+    ds, valid, numeric, where_sql, where_params, pivot_values = _pivot_context(
+        db, dataset_id, company_id, spec
+    )
+    select_sql, group_cols_sql, order_sql, params = pivot_builder.build_pivot(
+        spec, valid, numeric, pivot_values
+    )
+    parquet = query.locator_parquet(company_id, dataset_id)
+    matched = duckdb_engine.pivot_count(parquet, group_cols_sql, where_sql, where_params)
+    ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "reporte")
+    duckdb_engine.pivot_export_to_file(
+        parquet, select_sql, group_cols_sql, where_sql, params + where_params,
+        ruta, formato, delimiter_char, order_sql,
+    )
+    return ruta, media, nombre
+
+
+def _pivot_context(
+    db: Session, dataset_id: int, company_id: int, spec: PivotSpec,
+) -> tuple[DatasetModel, set[str], set[str], str, list, list | None]:
+    """Piezas comunes del pivote (DRY entre ver/descargar/guardar): devuelve
+    (ds, columnas_válidas, columnas_numéricas, where_sql, where_params, valores_cross_tab)."""
+    ds = query.requerir_listo(db, dataset_id, company_id)
+    valid = query.columnas_validas(ds)
+    numeric = _numeric_columns(ds)
+    where_sql, where_params = query_builder.build_where(spec.filter, valid)
+    pivot_values = _distinct_pivot_values(company_id, dataset_id, spec, valid)
+    return ds, valid, numeric, where_sql, where_params, pivot_values
+
+
+def _distinct_pivot_values(
+    company_id: int, dataset_id: int, spec: PivotSpec, valid: set[str],
+) -> list | None:
+    """Valores distintos de la columna de cross-tab (o None si no hay cross-tab)."""
+    if spec.pivot_column is None:
+        return None
+    column_sql = query_builder.quote_column(spec.pivot_column, valid)
+    values, truncated = duckdb_engine.distinct_values(
+        query.locator_parquet(company_id, dataset_id), column_sql, None,
+        pivot_builder.MAX_PIVOT_COLUMNS,
+    )
+    if truncated:
+        raise query_builder.InvalidFilterError(
+            f"La columna '{spec.pivot_column}' tiene demasiados valores distintos para "
+            f"usarla como columnas (máximo {pivot_builder.MAX_PIVOT_COLUMNS}). Filtra o elige otra."
+        )
+    return values
+
+
 # ── Guardar como dataset derivado ────────────────────────────────────────
 
 def crear_derivado(
@@ -241,12 +326,16 @@ def planificar(
 
     Corre en el web (hilo de fondo); el payload resultante es picklable y se envía al
     subproceso. `spec` trae la operación y sus piezas de dominio (filtro + específicas)."""
-    ds = query.requerir_listo(db, source_id, company_id)
-    valid = query.columnas_validas(ds)
-    where_sql, where_params = query_builder.build_where(spec.get("filtro"), valid)
     source = query.locator_parquet(company_id, source_id)
     dest = query.locator_parquet(company_id, new_id)
     kind = spec["kind"]
+
+    if kind == DatasetOrigin.pivot.value:
+        return _plan_pivot(db, source_id, company_id, source, dest, spec["pivot_spec"])
+
+    ds = query.requerir_listo(db, source_id, company_id)
+    valid = query.columnas_validas(ds)
+    where_sql, where_params = query_builder.build_where(spec.get("filtro"), valid)
 
     if kind == DatasetOrigin.computed.value:
         select_sql, params = expression_builder.build_compute_select(spec["columnas"], valid)
@@ -267,6 +356,23 @@ def planificar(
     raise ValueError(f"Operación de materialización no soportada: {kind}")
 
 
+def _plan_pivot(
+    db: Session, source_id: int, company_id: int, source: str, dest: str, spec: PivotSpec,
+) -> dict:
+    """Payload de materialización de un pivote (valida y arma el SQL del reporte)."""
+    _, valid, numeric, where_sql, where_params, pivot_values = _pivot_context(
+        db, source_id, company_id, spec
+    )
+    select_sql, group_cols_sql, order_sql, params = pivot_builder.build_pivot(
+        spec, valid, numeric, pivot_values
+    )
+    return {
+        "kind": "pivot", "source": source, "dest": dest,
+        "select_sql": select_sql, "group_cols_sql": group_cols_sql,
+        "where_sql": where_sql, "order_sql": order_sql, "params": params + where_params,
+    }
+
+
 def _payload_materialize(
     source: str, dest: str, select_sql: str, where_sql: str, params: list
 ) -> dict:
@@ -280,7 +386,12 @@ def materializar(payload: dict) -> dict:
     """Target picklable del subproceso: ejecuta el COPY pesado al Parquet destino y
     devuelve un resumen liviano (columnas + nº de filas). No toca la BD; lanza ante error."""
     kind = payload["kind"]
-    if kind == "materialize":  # columnas calculadas y buscar/reemplazar
+    if kind == "pivot":
+        duckdb_engine.pivot_to_parquet(
+            payload["source"], payload["select_sql"], payload["group_cols_sql"],
+            payload["where_sql"], payload["params"], payload["dest"], payload["order_sql"],
+        )
+    elif kind == "materialize":  # columnas calculadas y buscar/reemplazar
         duckdb_engine.materialize_to_parquet(
             payload["source"], payload["select_sql"], payload["where_sql"],
             payload["params"], payload["dest"],

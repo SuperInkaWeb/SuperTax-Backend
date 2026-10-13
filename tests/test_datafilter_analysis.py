@@ -9,7 +9,13 @@ import os
 
 import pytest
 
-from src.modules.datafilter.domain.analysis import MatchMode, ReplacementRule
+from src.modules.datafilter.domain.analysis import (
+    Aggregation,
+    MatchMode,
+    Measure,
+    PivotSpec,
+    ReplacementRule,
+)
 from src.modules.datafilter.domain.expressions import (
     ColumnExpr,
     ComputedColumn,
@@ -20,6 +26,7 @@ from src.modules.datafilter.domain.expressions import (
 from src.modules.datafilter.infrastructure import (
     dedupe_builder,
     expression_builder,
+    pivot_builder,
     query_builder,
     replace_builder,
 )
@@ -63,6 +70,37 @@ def test_build_dedupe_sin_claves_y_con_claves():
     select_sql, qualify_sql = dedupe_builder.build_dedupe(["serie"], _VALID)
     assert select_sql == "*"
     assert 'PARTITION BY "serie"' in qualify_sql
+
+
+def test_build_pivot_suma_redondeada_y_group_by():
+    spec = PivotSpec(
+        group_by=["serie"], measures=[Measure(column="igv", aggregation=Aggregation.SUM)]
+    )
+    select_sql, group_cols_sql, order_sql, params = pivot_builder.build_pivot(
+        spec, _VALID, {"igv"}, None
+    )
+    assert group_cols_sql == '"serie"'
+    assert 'round(sum("igv")' in select_sql
+    assert params == [] and order_sql is None
+
+
+def test_build_pivot_suma_sobre_texto_rechazada():
+    spec = PivotSpec(
+        group_by=["serie"], measures=[Measure(column="serie", aggregation=Aggregation.SUM)]
+    )
+    with pytest.raises(query_builder.InvalidFilterError):
+        pivot_builder.build_pivot(spec, _VALID, {"igv"}, None)
+
+
+def test_build_pivot_crosstab_valor_como_parametro():
+    spec = PivotSpec(
+        group_by=["serie"],
+        measures=[Measure(aggregation=Aggregation.COUNT)],
+        pivot_column="igv",
+    )
+    select_sql, _, _, params = pivot_builder.build_pivot(spec, _VALID, {"igv"}, [69.05, 20.12])
+    assert "CASE WHEN" in select_sql and "?" in select_sql
+    assert params == [69.05, 20.12]  # valores del cross-tab NUNCA concatenados
 
 
 # ── Integración con el motor (Parquet local) ─────────────────────────────
@@ -122,3 +160,35 @@ def test_stats_columna_numerica(parquet_local):
     row = duckdb_engine.column_stats(parquet, '"igv"', "", [], numeric=True)
     total, non_null, distinct = int(row[0]), int(row[1]), int(row[2])
     assert total == 3 and non_null == 3 and distinct == 2
+
+
+def test_pivot_agrupa_y_suma(parquet_local):
+    parquet, _, duckdb_engine = parquet_local
+    spec = PivotSpec(
+        group_by=["serie"], measures=[Measure(column="igv", aggregation=Aggregation.SUM)]
+    )
+    select_sql, group_cols_sql, order_sql, params = pivot_builder.build_pivot(
+        spec, {"serie", "igv"}, {"igv"}, None
+    )
+    assert duckdb_engine.pivot_count(parquet, group_cols_sql, "", []) == 2  # B001, B002
+    _, rows = duckdb_engine.pivot_preview(
+        parquet, select_sql, group_cols_sql, "", params, 10, 0, order_sql
+    )
+    por_serie = {r["serie"]: r["suma_igv"] for r in rows}
+    assert por_serie["B001"] == 138.1  # 69.05 + 69.05
+    assert por_serie["B002"] == 20.12
+
+
+def test_pivot_materializa_a_parquet(parquet_local):
+    parquet, tmp, duckdb_engine = parquet_local
+    spec = PivotSpec(
+        group_by=["serie"], measures=[Measure(column="igv", aggregation=Aggregation.SUM)]
+    )
+    select_sql, group_cols_sql, order_sql, params = pivot_builder.build_pivot(
+        spec, {"serie", "igv"}, {"igv"}, None
+    )
+    dest = os.path.join(tmp, "reporte.parquet")
+    duckdb_engine.pivot_to_parquet(parquet, select_sql, group_cols_sql, "", params, dest, order_sql)
+    cols = {c.name for c in duckdb_engine.get_schema(dest)}
+    assert cols == {"serie", "suma_igv"}
+    assert duckdb_engine.count_matches(dest, "", []) == 2

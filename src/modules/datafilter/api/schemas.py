@@ -4,7 +4,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from src.modules.datafilter.domain.analysis import ReplacementRule
+from src.modules.datafilter.domain.analysis import PivotSpec, ReplacementRule
 from src.modules.datafilter.domain.expressions import ComputedColumn
 from src.modules.datafilter.domain.filtering import (
     Delimiter,
@@ -199,6 +199,32 @@ class DedupeSaveRequest(DedupeSpec):
 
 class DedupeDownloadRequest(DedupeSpec, AnalysisDownload):
     """Resultado sin duplicados que se descarga como archivo."""
+
+
+class PivotRequest(PivotSpec):
+    """Pivote para VER (una página del reporte)."""
+    limit: int = Field(default=100, ge=1, le=1000)
+    offset: int = Field(default=0, ge=0)
+
+
+class PivotResponse(BaseModel):
+    columns: list[str]
+    rows: list[dict]
+    total_matched: int  # nº de filas agrupadas del reporte completo
+    limit: int
+    offset: int
+    # Fila de Total general (métricas sobre todas las filas), sin las columnas de
+    # agrupación. Solo para la vista previa; no se persiste.
+    totals: dict | None = None
+
+
+class PivotSaveRequest(PivotSpec):
+    """Pivote que se persiste como un dataset nuevo (reporte reutilizable)."""
+    name: str = Field(min_length=1, max_length=120)
+
+
+class PivotDownloadRequest(PivotSpec, AnalysisDownload):
+    """Pivote que se descarga como archivo."""
 
 
 class StatsRequest(BaseModel):

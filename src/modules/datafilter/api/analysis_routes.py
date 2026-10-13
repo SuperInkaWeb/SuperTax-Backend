@@ -25,6 +25,10 @@ from src.modules.datafilter.api.schemas import (
     DedupeResponse,
     DedupeSaveRequest,
     DownloadFormat,
+    PivotDownloadRequest,
+    PivotRequest,
+    PivotResponse,
+    PivotSaveRequest,
     PreviewResponse,
     ReplaceDownloadRequest,
     ReplaceRequest,
@@ -47,7 +51,10 @@ _ERRORES = (
 )
 
 
-def _delimiter_char(body: ComputeDownloadRequest | ReplaceDownloadRequest | DedupeDownloadRequest):
+def _delimiter_char(
+    body: ComputeDownloadRequest | ReplaceDownloadRequest | DedupeDownloadRequest
+    | PivotDownloadRequest,
+):
     """Separador solo para TXT; CSV/XLSX lo ignoran."""
     return body.delimiter.char if body.format is DownloadFormat.TXT else None
 
@@ -254,6 +261,61 @@ def dedupe_save(
         "filtro": body.filter, "key_columns": body.key_columns,
     }
     return _guardar(db, ctx, dataset_id, body.name, DatasetOrigin.deduped, spec)
+
+
+# ── Tablas dinámicas (pivote) ────────────────────────────────────────────
+
+@router.post("/datasets/{dataset_id}/pivot/preview", response_model=PivotResponse)
+def pivot_preview(
+    dataset_id: int,
+    body: PivotRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> PivotResponse:
+    """Una página del reporte dinámico + total de filas agrupadas + Total general."""
+    try:
+        columns, rows, total, totals = analysis.run_pivot(
+            db, dataset_id, ctx.company.id, spec=body, limit=body.limit, offset=body.offset
+        )
+    except _ERRORES as exc:
+        raise http_error(exc) from exc
+    return PivotResponse(
+        columns=columns, rows=rows, total_matched=total,
+        limit=body.limit, offset=body.offset, totals=totals,
+    )
+
+
+@router.post("/datasets/{dataset_id}/pivot/download")
+def pivot_download(
+    dataset_id: int,
+    body: PivotDownloadRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Descarga el reporte dinámico COMPLETO (CSV/XLSX/TXT)."""
+    try:
+        ruta, media, nombre = analysis.export_pivot(
+            db, dataset_id, ctx.company.id,
+            spec=body, formato=body.format.value, delimiter_char=_delimiter_char(body),
+        )
+    except _ERRORES as exc:
+        raise http_error(exc) from exc
+    return _descarga(ruta, media, nombre)
+
+
+@router.post(
+    "/datasets/{dataset_id}/pivot/save",
+    response_model=DatasetSummary, status_code=status.HTTP_201_CREATED,
+)
+def pivot_save(
+    dataset_id: int,
+    body: PivotSaveRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.create")),
+    db: Session = Depends(get_db),
+) -> DatasetSummary:
+    """Guarda el reporte dinámico como un dataset nuevo (materializado en segundo plano)."""
+    spec = {"kind": DatasetOrigin.pivot.value, "pivot_spec": body}
+    return _guardar(db, ctx, dataset_id, body.name, DatasetOrigin.pivot, spec)
 
 
 # ── Estadísticas por columna ─────────────────────────────────────────────
