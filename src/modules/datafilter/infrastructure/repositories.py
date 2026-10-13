@@ -64,6 +64,27 @@ class SqlDatasetRepository:
         self.db.refresh(ds)
         return ds
 
+    def create_derived(
+        self, *, company_id: int, created_by_id: int, name: str, origin: DatasetOrigin
+    ) -> DatasetModel:
+        """Registra un dataset DERIVADO (pivote/calculado/reemplazo/dedupe) ya en
+        `processing`: sus datos se materializan desde otro Parquet, no hay crudo que
+        subir. El proceso web lo pasa a `ready`/`failed` al terminar la materialización."""
+        ds = DatasetModel(
+            company_id=company_id,
+            created_by_id=created_by_id,
+            original_filename=name,
+            extension=".parquet",
+            status=DatasetStatus.processing.value,
+            origin=origin.value,
+            columns=[],
+            sheets=[],
+        )
+        self.db.add(ds)
+        self.db.commit()
+        self.db.refresh(ds)
+        return ds
+
     def set_uploaded(self, dataset_id: int, size_bytes: int, source_path: str) -> None:
         ds = self.db.get(DatasetModel, dataset_id)
         if ds is not None:

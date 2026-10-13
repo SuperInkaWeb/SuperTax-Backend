@@ -45,7 +45,9 @@ class DownloadTooLarge(Exception):
     """El resultado filtrado excede el máximo de filas descargables."""
 
 
-def _require_ready(db: Session, dataset_id: int, company_id: int) -> DatasetModel:
+def requerir_listo(db: Session, dataset_id: int, company_id: int) -> DatasetModel:
+    """Devuelve el dataset de la empresa o lanza si no existe / aún no está listo.
+    Compartido por el filtrado y el análisis (columnas calculadas, dedupe, etc.)."""
     ds = SqlDatasetRepository(db).get(dataset_id, company_id)
     if ds is None:
         raise DatasetNotFound()
@@ -54,12 +56,26 @@ def _require_ready(db: Session, dataset_id: int, company_id: int) -> DatasetMode
     return ds
 
 
-def _parquet_locator(company_id: int, dataset_id: int) -> str:
+def locator_parquet(company_id: int, dataset_id: int) -> str:
     return storage_access.locator(storage_access.parquet_key(company_id, dataset_id))
 
 
-def _columnas_validas(ds: DatasetModel) -> set[str]:
+def columnas_validas(ds: DatasetModel) -> set[str]:
     return {c["name"] for c in (ds.columns or [])}
+
+
+def preparar_destino_export(
+    ds: DatasetModel, formato: str, matched: int, sufijo: str
+) -> tuple[str, str, str]:
+    """Valida el tope de filas, crea un temporal y arma el nombre de descarga.
+
+    Devuelve (ruta_temporal, media_type, nombre); el llamador escribe el archivo en
+    la ruta. Compartido por el filtrado y las descargas de análisis (DRY)."""
+    _guard_download(matched, formato)
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=f".{formato}")
+    handle.close()
+    nombre = f"{_sanitize(ds.original_filename)}_{sufijo}.{formato}"
+    return handle.name, _MEDIA_TYPES[formato], nombre
 
 
 def preview(
@@ -68,13 +84,13 @@ def preview(
     limit: int, offset: int, search: str | None,
 ) -> tuple[list[str], list[dict], int]:
     """Aplica filtros y devuelve (columnas, filas, total de coincidencias)."""
-    ds = _require_ready(db, dataset_id, company_id)
-    valid = _columnas_validas(ds)
+    ds = requerir_listo(db, dataset_id, company_id)
+    valid = columnas_validas(ds)
     where_sql, params = query_builder.build_where(filtro, valid)
     where_sql, params = query_builder.apply_search(where_sql, params, search, valid)
     select_sql = query_builder.build_select(seleccion, valid)
     order_sql = query_builder.build_order_by(orden, valid)
-    parquet = _parquet_locator(company_id, dataset_id)
+    parquet = locator_parquet(company_id, dataset_id)
 
     columns, rows = duckdb_engine.preview(
         parquet, select_sql, where_sql, order_sql, limit, offset, params
@@ -91,11 +107,11 @@ def distinct_values(
     db: Session, dataset_id: int, company_id: int, column: str, search: str | None
 ) -> tuple[list[str], bool]:
     """Valores únicos de una columna para el filtro tipo Excel. Devuelve (valores, truncado)."""
-    ds = _require_ready(db, dataset_id, company_id)
-    valid = _columnas_validas(ds)
+    ds = requerir_listo(db, dataset_id, company_id)
+    valid = columnas_validas(ds)
     column_sql = query_builder.quote_column(column, valid)  # valida contra whitelist
     values, truncated = duckdb_engine.distinct_values(
-        _parquet_locator(company_id, dataset_id), column_sql, search, _DISTINCT_LIMIT
+        locator_parquet(company_id, dataset_id), column_sql, search, _DISTINCT_LIMIT
     )
     return [str(v) for v in values], truncated
 
@@ -126,24 +142,20 @@ def build_export(
     search: str | None, formato: str, delimiter_char: str | None,
 ) -> tuple[str, str, str]:
     """Genera el archivo filtrado en un temporal. Devuelve (ruta, media_type, nombre)."""
-    ds = _require_ready(db, dataset_id, company_id)
-    valid = _columnas_validas(ds)
+    ds = requerir_listo(db, dataset_id, company_id)
+    valid = columnas_validas(ds)
     where_sql, params = query_builder.build_where(filtro, valid)
     where_sql, params = query_builder.apply_search(where_sql, params, search, valid)
     select_sql = query_builder.build_select(seleccion, valid)
     order_sql = query_builder.build_order_by(orden, valid)
-    parquet = _parquet_locator(company_id, dataset_id)
+    parquet = locator_parquet(company_id, dataset_id)
 
     matched = duckdb_engine.count_matches(parquet, where_sql, params)
-    _guard_download(matched, formato)
-
-    handle = tempfile.NamedTemporaryFile(delete=False, suffix=f".{formato}")
-    handle.close()
+    ruta, media_type, nombre = preparar_destino_export(ds, formato, matched, "filtrado")
     duckdb_engine.export_to_file(
-        parquet, select_sql, where_sql, order_sql, params, handle.name, formato, delimiter_char
+        parquet, select_sql, where_sql, order_sql, params, ruta, formato, delimiter_char
     )
-    nombre = f"{_sanitize(ds.original_filename)}_filtrado.{formato}"
-    return handle.name, _MEDIA_TYPES[formato], nombre
+    return ruta, media_type, nombre
 
 
 def eliminar(db: Session, dataset_id: int, company_id: int) -> bool:

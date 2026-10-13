@@ -102,8 +102,9 @@ async def subir_dataset(
     return DatasetSummary.from_model(ds)
 
 
-def _http(exc: Exception) -> HTTPException:
-    """Traduce los errores del servicio de filtrado a respuestas HTTP."""
+def http_error(exc: Exception) -> HTTPException:
+    """Traduce los errores de filtrado/análisis a respuestas HTTP. Compartido con
+    las rutas de análisis (mismas familias de excepción)."""
     if isinstance(exc, query.DatasetNotFound):
         return HTTPException(status.HTTP_404_NOT_FOUND, detail="Dataset no encontrado")
     if isinstance(exc, query.DatasetNotReady):
@@ -133,7 +134,7 @@ def previsualizar(
             limit=request.limit, offset=request.offset, search=request.search,
         )
     except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError) as exc:
-        raise _http(exc) from exc
+        raise http_error(exc) from exc
     return PreviewResponse(
         columns=columns, rows=rows, total_matched=total,
         limit=request.limit, offset=request.offset,
@@ -154,7 +155,7 @@ def valores_distintos(
     try:
         values, truncated = query.distinct_values(db, dataset_id, ctx.company.id, column, search)
     except (query.DatasetNotFound, query.DatasetNotReady, InvalidFilterError) as exc:
-        raise _http(exc) from exc
+        raise http_error(exc) from exc
     return DistinctValuesResponse(column=column, values=values, truncated=truncated)
 
 
@@ -175,7 +176,7 @@ def descargar(
         )
     except (query.DatasetNotFound, query.DatasetNotReady, query.DownloadTooLarge,
             InvalidFilterError) as exc:
-        raise _http(exc) from exc
+        raise http_error(exc) from exc
     return FileResponse(
         path=ruta, media_type=media_type, filename=nombre,
         background=BackgroundTask(os.remove, ruta),  # borra el temporal tras enviarlo
