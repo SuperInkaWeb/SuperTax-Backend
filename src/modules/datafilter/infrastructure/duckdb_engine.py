@@ -12,10 +12,13 @@ Notas de seguridad:
     datos del usuario; se escapan/normalizan antes de inyectarse como literal SQL.
   - Los VALORES de filtro se pasan SIEMPRE como parámetros ('?') enlazados.
 """
+import ctypes
+import ctypes.util
 import logging
 import os
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from xml.etree import ElementTree
@@ -25,6 +28,35 @@ import duckdb
 from src.platform.config.settings import settings
 
 logger = logging.getLogger("datafilter.duckdb")
+
+# Límite de memoria efectivo para ESTE proceso. El web lo pone bajo (preview liviano);
+# los subprocesos efímeros usan el default (settings.DUCKDB_MEMORY_LIMIT, más alto).
+# Centinela: None = aún no configurado -> usa settings; "" = sin límite explícito.
+_MEMORY_LIMIT_OVERRIDE: str | None = None
+# libc para malloc_trim (devolver al SO la RAM liberada). False = no disponible.
+_LIBC: "ctypes.CDLL | bool | None" = None
+
+
+def set_memory_limit(value: str | None) -> None:
+    """Fija el límite de memoria de DuckDB para este proceso (p. ej. el web)."""
+    global _MEMORY_LIMIT_OVERRIDE
+    _MEMORY_LIMIT_OVERRIDE = value
+
+
+def _release_memory() -> None:
+    """Devuelve al SO la memoria ya liberada (glibc/Linux). No-op en otros SO.
+
+    DuckDB libera sus buffers al cerrar la conexión, pero glibc retiene esas arenas;
+    `malloc_trim(0)` se las devuelve al SO para que la RSS baje al quedar inactivo."""
+    global _LIBC
+    try:
+        if _LIBC is None:
+            name = ctypes.util.find_library("c")
+            _LIBC = ctypes.CDLL(name) if name else False
+        if _LIBC:
+            _LIBC.malloc_trim(0)
+    except Exception:  # entorno sin glibc/malloc_trim: se ignora
+        _LIBC = False
 
 CSV_EXTENSIONS = {".csv", ".txt"}
 EXCEL_EXTENSIONS = {".xlsx", ".xls"}
@@ -110,8 +142,9 @@ def list_xlsx_sheets(local_path: str) -> list[str]:
 
 def _apply_memory_guards(con: duckdb.DuckDBPyConnection) -> None:
     """Acota la RAM de DuckDB y habilita el volcado a disco (anti-OOM en contenedor)."""
-    if settings.DUCKDB_MEMORY_LIMIT:
-        con.execute(f"SET memory_limit={_sql_str(settings.DUCKDB_MEMORY_LIMIT)}")
+    limit = _MEMORY_LIMIT_OVERRIDE if _MEMORY_LIMIT_OVERRIDE is not None else settings.DUCKDB_MEMORY_LIMIT
+    if limit:
+        con.execute(f"SET memory_limit={_sql_str(limit)}")
     temp_dir = settings.DUCKDB_TEMP_DIR or os.path.join(tempfile.gettempdir(), "datafilter_duckdb_tmp")
     os.makedirs(temp_dir, exist_ok=True)
     con.execute(f"SET temp_directory={_sql_str(temp_dir)}")
@@ -143,6 +176,20 @@ def _connect() -> duckdb.DuckDBPyConnection:
     return con
 
 
+@contextmanager
+def _session():
+    """Conexión DuckDB que, al cerrarse, devuelve su RAM al SO (malloc_trim).
+
+    Así la RSS del proceso baja tras cada consulta: el web no queda inflado al
+    navegar archivos grandes, y en idle vuelve a la base."""
+    con = _connect()
+    try:
+        yield con
+    finally:
+        con.close()
+        _release_memory()
+
+
 def convert_to_parquet(
     source: str, dest: str, extension: str, sheet: str | None = None
 ) -> tuple[list[ColumnInfo], int]:
@@ -151,7 +198,7 @@ def convert_to_parquet(
     La conversión se hace vía COPY en streaming: DuckDB no carga todo en RAM.
     `sheet` solo aplica a Excel; para CSV/TXT se ignora.
     """
-    with _connect() as con:
+    with _session() as con:
         _copy_with_fallbacks(con, source, dest, extension, sheet)
         columns = _describe(con, dest)
         row_count = con.execute(f"SELECT count(*) FROM read_parquet({_sql_path(dest)})").fetchone()[0]
@@ -215,14 +262,14 @@ def _describe(con: duckdb.DuckDBPyConnection, parquet: str) -> list[ColumnInfo]:
 
 
 def get_schema(parquet: str) -> list[ColumnInfo]:
-    with _connect() as con:
+    with _session() as con:
         return _describe(con, parquet)
 
 
 def count_matches(parquet: str, where_sql: str, params: list) -> int:
     where_clause = f"WHERE {where_sql}" if where_sql else ""
     sql = f"SELECT count(*) FROM read_parquet({_sql_path(parquet)}) {where_clause}"
-    with _connect() as con:
+    with _session() as con:
         return int(con.execute(sql, params).fetchone()[0])
 
 
@@ -236,7 +283,7 @@ def preview(
         f"SELECT {select_sql} FROM read_parquet({_sql_path(parquet)}) "
         f"{where_clause} {order_sql} LIMIT {int(limit)} OFFSET {int(offset)}"
     )
-    with _connect() as con:
+    with _session() as con:
         cursor = con.execute(sql, params)
         column_names = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
@@ -255,7 +302,7 @@ def _copy_options(fmt: str, delimiter: str | None) -> str:
 
 def _copy_query_to_file(inner_sql: str, params: list, dest_path: str, fmt: str, delimiter: str | None) -> None:
     sql = f"COPY ({inner_sql}) TO {_sql_path(dest_path)} {_copy_options(fmt, delimiter)}"
-    with _connect() as con:
+    with _session() as con:
         con.execute(sql, params)
 
 
@@ -289,7 +336,7 @@ def pivot_preview(
 ) -> tuple[list[str], list[dict]]:
     body = _pivot_body(parquet, select_sql, where_sql, group_cols_sql, order_sql)
     sql = f"SELECT * FROM ({body}) LIMIT {int(limit)} OFFSET {int(offset)}"
-    with _connect() as con:
+    with _session() as con:
         cursor = con.execute(sql, params)
         column_names = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
@@ -299,7 +346,7 @@ def pivot_preview(
 def pivot_totals(parquet: str, select_sql: str, where_sql: str, params: list) -> dict:
     where_clause = f"WHERE {where_sql}" if where_sql else ""
     sql = f"SELECT {select_sql} FROM read_parquet({_sql_path(parquet)}) {where_clause}"
-    with _connect() as con:
+    with _session() as con:
         cursor = con.execute(sql, params)
         column_names = [desc[0] for desc in cursor.description]
         row = cursor.fetchone()
@@ -312,7 +359,7 @@ def pivot_count(parquet: str, group_cols_sql: str, where_sql: str, where_params:
         f"SELECT {group_cols_sql} FROM read_parquet({_sql_path(parquet)}) "
         f"{where_clause} GROUP BY {group_cols_sql}"
     )
-    with _connect() as con:
+    with _session() as con:
         return int(con.execute(f"SELECT count(*) FROM ({inner})", where_params).fetchone()[0])
 
 
@@ -321,7 +368,7 @@ def pivot_to_parquet(
     params: list, dest: str, order_sql: str | None = None,
 ) -> None:
     body = _pivot_body(parquet, select_sql, where_sql, group_cols_sql, order_sql)
-    with _connect() as con:
+    with _session() as con:
         con.execute(f"COPY ({body}) TO {_sql_path(dest)} (FORMAT PARQUET)", params)
 
 
@@ -349,7 +396,7 @@ def dedupe_preview(
 ) -> tuple[list[str], list[dict]]:
     body = _dedupe_body(parquet, select_sql, where_sql, qualify_sql)
     sql = f"SELECT * FROM ({body}) {order_sql} LIMIT {int(limit)} OFFSET {int(offset)}"
-    with _connect() as con:
+    with _session() as con:
         cursor = con.execute(sql, params)
         column_names = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
@@ -360,7 +407,7 @@ def dedupe_count(
     parquet: str, select_sql: str, where_sql: str, qualify_sql: str | None, params: list
 ) -> int:
     body = _dedupe_body(parquet, select_sql, where_sql, qualify_sql)
-    with _connect() as con:
+    with _session() as con:
         return int(con.execute(f"SELECT count(*) FROM ({body})", params).fetchone()[0])
 
 
@@ -369,7 +416,7 @@ def dedupe_to_parquet(
     params: list, dest: str,
 ) -> None:
     body = _dedupe_body(parquet, select_sql, where_sql, qualify_sql)
-    with _connect() as con:
+    with _session() as con:
         con.execute(f"COPY ({body}) TO {_sql_path(dest)} (FORMAT PARQUET)", params)
 
 
@@ -386,7 +433,7 @@ def materialize_to_parquet(
 ) -> None:
     where_clause = f"WHERE {where_sql}" if where_sql else ""
     body = f"SELECT {select_sql} FROM read_parquet({_sql_path(parquet)}) {where_clause}"
-    with _connect() as con:
+    with _session() as con:
         con.execute(f"COPY ({body}) TO {_sql_path(dest)} (FORMAT PARQUET)", params)
 
 
@@ -400,7 +447,7 @@ def column_stats(
         f"min({column_sql}), max({column_sql}){extra} "
         f"FROM read_parquet({_sql_path(parquet)}) {where_clause}"
     )
-    with _connect() as con:
+    with _session() as con:
         return con.execute(sql, params).fetchone()
 
 
@@ -414,7 +461,7 @@ def column_top_values(
         f"FROM read_parquet({_sql_path(parquet)}) {where_clause} "
         f"GROUP BY {column_sql} ORDER BY freq DESC, value LIMIT {int(limit)}"
     )
-    with _connect() as con:
+    with _session() as con:
         rows = con.execute(sql, params).fetchall()
     return [(str(row[0]), int(row[1])) for row in rows]
 
@@ -433,7 +480,7 @@ def distinct_values(
         f"WHERE {column_sql} IS NOT NULL {filter_clause} "
         f"ORDER BY value LIMIT {int(limit) + 1}"
     )
-    with _connect() as con:
+    with _session() as con:
         rows = con.execute(sql, query_params).fetchall()
     values = [row[0] for row in rows]
     truncated = len(values) > limit

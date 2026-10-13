@@ -11,6 +11,7 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 
 from src.modules.datafilter.application.ingest import convertir, friendly_error
+from src.modules.datafilter.infrastructure import duckdb_engine
 from src.modules.datafilter.infrastructure.repositories import SqlDatasetRepository
 from src.platform.config.settings import settings
 from src.platform.database.session import SessionLocal
@@ -74,8 +75,13 @@ def encolar_ingesta(dataset_id: int) -> None:
 
 
 def recuperar_pendientes() -> None:
-    """Al arrancar el web: marca `failed` los datasets que quedaron en `processing`
-    (interrumpidos por un redeploy) y re-despacha los que quedaron en `pending`."""
+    """Al arrancar el web: fija el límite de RAM de DuckDB para el proceso web (las
+    consultas livianas de preview/valores), marca `failed` los datasets que quedaron
+    en `processing` (redeploy a mitad) y re-despacha los que quedaron en `pending`.
+
+    Solo corre en el web (lifespan). Los subprocesos efímeros nacen limpios y usan
+    `DUCKDB_MEMORY_LIMIT` (más alto), no este límite del web."""
+    duckdb_engine.set_memory_limit(settings.DUCKDB_WEB_MEMORY_LIMIT or settings.DUCKDB_MEMORY_LIMIT)
     db = SessionLocal()
     try:
         repo = SqlDatasetRepository(db)

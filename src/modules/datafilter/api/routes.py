@@ -28,6 +28,7 @@ from src.modules.datafilter.infrastructure.ingest_dispatch import encolar_ingest
 from src.modules.datafilter.infrastructure.query_builder import InvalidFilterError
 from src.modules.datafilter.infrastructure.repositories import SqlDatasetRepository
 from src.platform.authorization.deps import require_module, require_permission
+from src.platform.config.settings import settings
 from src.platform.database.session import get_db
 from src.platform.storage import get_storage
 from src.platform.storage.base import FileStorage
@@ -92,13 +93,29 @@ async def subir_dataset(
     )
 
     key = storage_access.source_key(ctx.company.id, ds.id, extension)
+    max_bytes = settings.DATAFILTER_MAX_UPLOAD_MB * 1024 * 1024
     tamano = 0
+    excede = False
     with storage.open_write(key) as salida:
         while chunk := await file.read(_CHUNK):
-            salida.write(chunk)
             tamano += len(chunk)
-    repo.set_uploaded(ds.id, tamano, key)
+            if tamano > max_bytes:
+                excede = True
+                break  # deja de leer: no transmitimos un archivo que ya rechazamos
+            salida.write(chunk)
 
+    if excede:
+        try:
+            storage_access.delete(key)
+        except Exception:  # limpieza best-effort del parcial
+            pass
+        repo.delete(ds.id, ctx.company.id)
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"El archivo supera el máximo de {settings.DATAFILTER_MAX_UPLOAD_MB} MB.",
+        )
+
+    repo.set_uploaded(ds.id, tamano, key)
     encolar_ingesta(ds.id)
     return DatasetSummary.from_model(ds)
 

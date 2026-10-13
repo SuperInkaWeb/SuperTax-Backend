@@ -76,17 +76,25 @@ class Settings(BaseSettings):
     # Igual para el Scanner: cuántas extracciones OCR corren a la vez en el web
     # (on-demand). El OCR es CPU-bound; ajústalo a los núcleos/RAM del web.
     SCANNER_MAX_CONCURRENCY: int = 2
-    # DataFilter: cuántas ingestas (conversión a Parquet con DuckDB) corren a la
-    # vez en el web; cada una en un subproceso efímero. El resto espera turno, así
-    # subir muchos archivos nunca desborda la RAM.
-    DATAFILTER_MAX_CONCURRENCY: int = 1
+    # DataFilter: cuántas operaciones PESADAS de DuckDB (ingestas + materializaciones
+    # + vistas de análisis) corren en PARALELO, cada una en un subproceso efímero. El
+    # resto espera turno (backpressure), así subir/analizar muchos nunca desborda la
+    # RAM. Pico ≈ DATAFILTER_MAX_CONCURRENCY × DUCKDB_MEMORY_LIMIT; súbelo si tu plan
+    # tiene RAM de sobra (más throughput, más pico).
+    DATAFILTER_MAX_CONCURRENCY: int = 2
     # Tope de filas que una descarga filtrada puede generar (defensa A04 / costo).
     DATAFILTER_MAX_DOWNLOAD_ROWS: int = 5_000_000
+    # Tamaño máximo de archivo a subir (MB). Defensa contra abuso / costo (A04).
+    DATAFILTER_MAX_UPLOAD_MB: int = 2048
     # Guardas de memoria de DuckDB (anti-OOM en contenedor, ve la RAM del host):
-    # límite de RAM por conexión (vacío = default de DuckDB) y carpeta de volcado
-    # a disco al superarlo (vacío → temporal del SO).
+    # límite de RAM por conexión en los SUBPROCESOS pesados (vacío = default de DuckDB)
+    # y carpeta de volcado a disco al superarlo (vacío → temporal del SO).
     DUCKDB_MEMORY_LIMIT: str = ""
     DUCKDB_TEMP_DIR: str = ""
+    # Límite de RAM de DuckDB en el PROCESO WEB (preview/valores, consultas livianas y
+    # frecuentes). Se mantiene bajo para que el web —always-on— no acumule memoria.
+    # Vacío = usa DUCKDB_MEMORY_LIMIT (o el default de DuckDB si también está vacío).
+    DUCKDB_WEB_MEMORY_LIMIT: str = ""
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""
