@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = (
         "postgresql+psycopg2://plataforma:plataforma@localhost:5433/plataforma"
     )
+    # Al arrancar, aplicar migraciones + seed idempotentes (auto-reparación si el
+    # pre-deploy del proveedor no corre). Protegido con un advisory lock de Postgres
+    # para que solo UNA instancia lo haga. Ponlo en false si prefieres migrar solo
+    # en un paso de despliegue dedicado.
+    DB_BOOTSTRAP_ON_STARTUP: bool = True
 
     # ─── Auth0 (identidad única) ───
     AUTH0_DOMAIN: str = ""
