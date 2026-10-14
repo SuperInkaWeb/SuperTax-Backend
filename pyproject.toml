@@ -87,4 +87,4 @@ forbidden_modules = ["src.modules"]
 [[tool.importlinter.contracts]]
 name = "Los módulos de negocio no se importan entre sí"
 type = "independence"
-modules = ["src.modules.sire", "src.modules.sunat", "src.modules.scanner", "src.modules.datafilter"]
+modules = ["src.modules.sire", "src.modules.sunat", "src.modules.scanner", "src.modules.datafilter", "src.modules.correos"]

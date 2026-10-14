@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # frecuentes). Se mantiene bajo para que el web —always-on— no acumule memoria.
     # Vacío = usa DUCKDB_MEMORY_LIMIT (o el default de DuckDB si también está vacío).
     DUCKDB_WEB_MEMORY_LIMIT: str = ""
+    # Correos: cuántos escaneos (descarga de adjuntos + OCR/IA) corren a la vez en el
+    # web (on-demand). Cada uno es I/O (buzón) + CPU (OCR en subproceso); el resto espera.
+    CORREOS_MAX_CONCURRENCY: int = 2
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""
