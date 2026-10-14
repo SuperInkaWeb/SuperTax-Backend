@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     CORREOS_OAUTH_STATE_TTL_SECONDS: int = 600
     # Tamaño máximo por adjunto descargado (MB). Más grande se rechaza (A04/costo).
     CORREOS_MAX_ATTACHMENT_MB: int = 25
+    # Extracción: la IA de visión (Groq) es el último motor, de pago. Si se apaga, el
+    # pipeline usa solo los motores gratuitos (texto nativo/tablas/OCR local).
+    CORREOS_IA_HABILITADA: bool = True
+    # Tope de llamadas a la IA por escaneo (control de costo; el resto degrada a OCR).
+    CORREOS_MAX_IA_POR_ESCANEO: int = 50
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""

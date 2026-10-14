@@ -11,7 +11,7 @@ continúa; un cancel durante el proceso lo detiene dejando el job en 'cancelled'
 """
 import logging
 
-from src.modules.correos.application import mailbox_oauth, token_service
+from src.modules.correos.application import extraction_service, mailbox_oauth, token_service
 from src.modules.correos.infrastructure import mail_client, validator
 from src.modules.correos.infrastructure.models import ScanPhase
 from src.modules.correos.infrastructure.repositories import (
@@ -31,6 +31,9 @@ _EXT = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "i
 _CONTADORES_CERO = {
     "mensajes_revisados": 0, "mensajes_con_adjuntos": 0, "adjuntos_descargados": 0,
     "adjuntos_rechazados": 0, "adjuntos_duplicados": 0, "errores": 0,
+    # Fase de extracción (OCR/IA):
+    "registros_extraidos": 0, "registros_en_revision": 0, "adjuntos_sin_datos": 0,
+    "llamadas_ia": 0, "errores_extraccion": 0,
 }
 
 
@@ -133,10 +136,14 @@ def _procesar(db, job_id: int, company_id: int, connection_id: int, params: dict
             )
             contadores["adjuntos_descargados"] += 1
 
-        progreso = min(90, int((contadores["mensajes_revisados"] / max(1, limite)) * 85) + 10)
+        progreso = min(80, int((contadores["mensajes_revisados"] / max(1, limite)) * 70) + 10)
         scan_repo.update_progress(job_id, phase=ScanPhase.downloading.value,
                                   progress=progreso, counters=contadores)
 
+    if scan_repo.cancel_requested(job_id):
+        return
+    # Fase de extracción: OCR/IA sobre los adjuntos descargados (80% → 99%).
+    extraction_service.extraer_adjuntos(db, job_id, company_id, contadores, scan_repo)
     if scan_repo.cancel_requested(job_id):
         return
     scan_repo.set_completed(job_id, contadores)

@@ -1,12 +1,13 @@
 """Acceso a datos del módulo Correos (aislamiento por empresa en toda consulta)."""
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from src.modules.correos.infrastructure.models import (
     AttachmentModel,
     EmailMessageModel,
+    ExtractedRecordModel,
     MailboxConnectionModel,
     MailboxStatus,
     ProcessingErrorModel,
@@ -229,6 +230,28 @@ class SqlAttachmentRepository:
             )
         ) is not None
 
+    def pendientes_de_extraccion(
+        self, company_id: int, job_id: int
+    ) -> list[AttachmentModel]:
+        """Adjuntos de un escaneo que aún no produjeron registro. Idempotente: si el
+        escaneo se reejecuta, los ya extraídos no se vuelven a procesar."""
+        ya_extraido = (
+            exists()
+            .where(ExtractedRecordModel.attachment_id == AttachmentModel.id)
+            .where(ExtractedRecordModel.company_id == company_id)
+        )
+        stmt = (
+            select(AttachmentModel)
+            .join(EmailMessageModel, AttachmentModel.message_id == EmailMessageModel.id)
+            .where(
+                EmailMessageModel.job_id == job_id,
+                AttachmentModel.company_id == company_id,
+                ~ya_extraido,
+            )
+            .order_by(AttachmentModel.id)
+        )
+        return list(self.db.scalars(stmt))
+
     def create(
         self, *, company_id: int, message_id: int, original_name: str, storage_key: str,
         mime_type: str, size_bytes: int, sha256: str,
@@ -266,3 +289,27 @@ class SqlErrorRepository:
             )
             .order_by(ProcessingErrorModel.created_at.desc())
         ))
+
+
+class SqlRecordRepository:
+    """Registros tributarios extraídos de los adjuntos (aislados por empresa)."""
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def existe_para_adjunto(self, company_id: int, attachment_id: int) -> bool:
+        return self.db.scalar(
+            select(ExtractedRecordModel.id).where(
+                ExtractedRecordModel.company_id == company_id,
+                ExtractedRecordModel.attachment_id == attachment_id,
+            )
+        ) is not None
+
+    def create(self, valores: dict) -> ExtractedRecordModel:
+        """Crea un registro a partir de los valores de columna ya convertidos a su
+        tipo (Decimal/date) por el servicio de extracción."""
+        registro = ExtractedRecordModel(**valores)
+        self.db.add(registro)
+        self.db.commit()
+        self.db.refresh(registro)
+        return registro
