@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     CORREOS_IA_HABILITADA: bool = True
     # Tope de llamadas a la IA por escaneo (control de costo; el resto degrada a OCR).
     CORREOS_MAX_IA_POR_ESCANEO: int = 50
+    # Tope de filas por exportación Excel (acota una petición grande; se exportan las
+    # más recientes si el total lo supera).
+    CORREOS_MAX_EXPORT_ROWS: int = 50_000
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""

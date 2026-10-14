@@ -6,6 +6,7 @@ escaneos (lanzar, listar, ver, cancelar, errores). El progreso de un escaneo se
 sigue por polling de GET /scans/{id} o en vivo por SSE en /scans/{id}/stream.
 La extracción, la revisión y la exportación llegan después.
 """
+import io
 import re
 import time
 from datetime import date
@@ -27,7 +28,7 @@ from src.modules.correos.api.schemas import (
     ScanRequest,
     ScanSummary,
 )
-from src.modules.correos.application import mailbox_oauth, record_service
+from src.modules.correos.application import mailbox_oauth, record_service, report_service
 from src.modules.correos.application.record_service import CorreccionInvalida, FiltrosRegistro
 from src.modules.correos.infrastructure.models import ScanJobModel, ScanStatus
 from src.modules.correos.infrastructure.repositories import (
@@ -251,6 +252,43 @@ def listar_registros(
         fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, solo_aprobados=solo_aprobados,
     )
     return _lista(db, ctx.company.id, filtros, limit, offset)
+
+
+_MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get("/records/export")
+def exportar_registros(
+    ctx: ActiveContext = Depends(require_permission("correos.export.create")),
+    db: Session = Depends(get_db),
+    job_id: int | None = None,
+    ruc: str | None = Query(default=None, max_length=11, pattern=r"^\d{11}$"),
+    ruc_inquilino: str | None = Query(default=None, max_length=11, pattern=r"^\d{11}$"),
+    periodo: str | None = Query(default=None, max_length=6, pattern=r"^\d{6}$"),
+    periodo_desde: str | None = Query(default=None, max_length=6, pattern=r"^\d{6}$"),
+    periodo_hasta: str | None = Query(default=None, max_length=6, pattern=r"^\d{6}$"),
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+    solo_aprobados: bool = False,
+) -> StreamingResponse:
+    """Descarga el reporte Excel con los registros que cumplen el filtro (mismos filtros
+    que GET /records). Se genera al vuelo; si el total supera el tope se exportan los
+    más recientes. La cabecera X-Total-Registros informa cuántos cumplían el filtro."""
+    filtros = FiltrosRegistro(
+        job_id=job_id, ruc=ruc, ruc_inquilino=ruc_inquilino, periodo=periodo,
+        periodo_desde=periodo_desde, periodo_hasta=periodo_hasta,
+        fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, solo_aprobados=solo_aprobados,
+    )
+    xlsx, exportadas, total = report_service.generar_excel(db, ctx.company.id, filtros)
+    nombre = f"reporte-correos-{date.today():%Y%m%d}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(xlsx), media_type=_MIME_XLSX,
+        headers={
+            "Content-Disposition": f'attachment; filename="{nombre}"',
+            "X-Total-Registros": str(total),
+            "X-Filas-Exportadas": str(exportadas),
+        },
+    )
 
 
 @router.get("/review", response_model=RecordListResponse)
