@@ -11,12 +11,14 @@ import re
 import time
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.modules.correos.api.schemas import (
+    AuditEntry,
+    AuditListResponse,
     AuthorizeRequest,
     AuthorizeResponse,
     CallbackRequest,
@@ -28,8 +30,14 @@ from src.modules.correos.api.schemas import (
     ScanRequest,
     ScanSummary,
 )
-from src.modules.correos.application import mailbox_oauth, record_service, report_service
+from src.modules.correos.application import (
+    audit_service,
+    mailbox_oauth,
+    record_service,
+    report_service,
+)
 from src.modules.correos.application.record_service import CorreccionInvalida, FiltrosRegistro
+from src.modules.correos.domain.audit import AuditAction
 from src.modules.correos.infrastructure.models import ScanJobModel, ScanStatus
 from src.modules.correos.infrastructure.repositories import (
     SqlAttachmentRepository,
@@ -82,6 +90,7 @@ def autorizar_buzon(
 )
 def callback_buzon(
     body: CallbackRequest,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.mailbox.create")),
     db: Session = Depends(get_db),
 ) -> MailboxSummary:
@@ -90,23 +99,36 @@ def callback_buzon(
         conn = mailbox_oauth.completar(db, ctx.company.id, ctx.user.id, body.code, body.state)
     except mailbox_oauth.OAuthError as exc:
         raise HTTPException(exc.status_code, detail=exc.message) from exc
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.BUZON_VINCULADO, resource_type="mailbox_connection",
+        resource_id=conn.id, actor_ip=_ip(request),
+        metadata={"provider": conn.provider, "account_email": conn.account_email},
+    )
     return MailboxSummary.from_model(conn)
 
 
 @router.delete("/mailboxes/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 def desconectar_buzon(
     connection_id: int,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.mailbox.delete")),
     db: Session = Depends(get_db),
 ) -> None:
     """Desconecta (borra) una conexión de buzón de la empresa activa."""
     if not SqlMailboxRepository(db).delete(connection_id, ctx.company.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conexión no encontrada")
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.BUZON_DESVINCULADO, resource_type="mailbox_connection",
+        resource_id=connection_id, actor_ip=_ip(request),
+    )
 
 
 @router.post("/scans", response_model=ScanSummary, status_code=status.HTTP_201_CREATED)
 def lanzar_escaneo(
     body: ScanRequest,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.scan.create")),
     db: Session = Depends(get_db),
 ) -> ScanSummary:
@@ -122,6 +144,12 @@ def lanzar_escaneo(
     job = SqlScanRepository(db).create(
         company_id=ctx.company.id, requested_by_id=ctx.user.id,
         connection_id=body.connection_id, params=params,
+    )
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.ESCANEO_INICIADO, resource_type="scan_job",
+        resource_id=job.id, actor_ip=_ip(request),
+        metadata={"connection_id": body.connection_id, "limite": body.limite_de_mensajes},
     )
     encolar_escaneo(job.id)
     return ScanSummary.from_model(job)
@@ -153,6 +181,7 @@ def ver_escaneo(
 @router.post("/scans/{job_id}/cancel", response_model=ScanSummary)
 def cancelar_escaneo(
     job_id: int,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.scan.create")),
     db: Session = Depends(get_db),
 ) -> ScanSummary:
@@ -163,6 +192,11 @@ def cancelar_escaneo(
         if job is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escaneo no encontrado")
         raise HTTPException(status.HTTP_409_CONFLICT, detail="El escaneo ya terminó.")
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.ESCANEO_CANCELADO, resource_type="scan_job",
+        resource_id=job_id, actor_ip=_ip(request),
+    )
     return ScanSummary.from_model(repo.get(job_id, ctx.company.id))
 
 
@@ -259,6 +293,7 @@ _MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 @router.get("/records/export")
 def exportar_registros(
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.export.create")),
     db: Session = Depends(get_db),
     job_id: int | None = None,
@@ -280,6 +315,11 @@ def exportar_registros(
         fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, solo_aprobados=solo_aprobados,
     )
     xlsx, exportadas, total = report_service.generar_excel(db, ctx.company.id, filtros)
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.REPORTE_EXPORTADO, resource_type="report",
+        actor_ip=_ip(request), metadata={"filas_exportadas": exportadas, "total": total},
+    )
     nombre = f"reporte-correos-{date.today():%Y%m%d}.xlsx"
     return StreamingResponse(
         io.BytesIO(xlsx), media_type=_MIME_XLSX,
@@ -325,6 +365,7 @@ def ver_registro(
 @router.get("/records/{record_id}/document")
 def ver_documento(
     record_id: int,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.record.read")),
     db: Session = Depends(get_db),
     storage: FileStorage = Depends(get_storage),
@@ -336,6 +377,11 @@ def ver_documento(
     if adjunto is None or not storage.exists(adjunto.storage_key):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Documento no disponible")
     contenido = storage.read(adjunto.storage_key)
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.ADJUNTO_DESCARGADO, resource_type="attachment",
+        resource_id=adjunto.id, actor_ip=_ip(request),
+    )
     disposicion = f'inline; filename="{_nombre_seguro(adjunto.original_name)}"'
     return Response(
         content=contenido, media_type=adjunto.mime_type,
@@ -347,6 +393,7 @@ def ver_documento(
 def corregir_registro(
     record_id: int,
     body: CorreccionRequest,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.record.update")),
     db: Session = Depends(get_db),
 ) -> RecordSummary:
@@ -360,12 +407,19 @@ def corregir_registro(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.message) from exc
     if registro is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.REGISTRO_CORREGIDO, resource_type="extracted_record",
+        resource_id=record_id, actor_ip=_ip(request),
+        metadata={"campos": sorted(body.correcciones)},
+    )
     return RecordSummary.from_model(registro)
 
 
 @router.post("/records/{record_id}/approve", response_model=RecordSummary)
 def aprobar_registro(
     record_id: int,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.record.update")),
     db: Session = Depends(get_db),
 ) -> RecordSummary:
@@ -373,12 +427,18 @@ def aprobar_registro(
     registro = record_service.aprobar(db, ctx.company.id, ctx.user.id, record_id)
     if registro is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.REGISTRO_APROBADO, resource_type="extracted_record",
+        resource_id=record_id, actor_ip=_ip(request),
+    )
     return RecordSummary.from_model(registro)
 
 
 @router.post("/records/{record_id}/reject", response_model=RecordSummary)
 def rechazar_registro(
     record_id: int,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.record.update")),
     db: Session = Depends(get_db),
 ) -> RecordSummary:
@@ -386,18 +446,46 @@ def rechazar_registro(
     registro = record_service.rechazar(db, ctx.company.id, ctx.user.id, record_id)
     if registro is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.REGISTRO_RECHAZADO, resource_type="extracted_record",
+        resource_id=record_id, actor_ip=_ip(request),
+    )
     return RecordSummary.from_model(registro)
 
 
 @router.delete("/records/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def eliminar_registro(
     record_id: int,
+    request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.record.update")),
     db: Session = Depends(get_db),
 ) -> None:
     """Borra un registro extraído (el adjunto en R2 se conserva, pertenece al escaneo)."""
     if not record_service.eliminar(db, ctx.company.id, record_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.REGISTRO_ELIMINADO, resource_type="extracted_record",
+        resource_id=record_id, actor_ip=_ip(request),
+    )
+
+
+# ── Bitácora de auditoría ────────────────────────────────────────────
+
+@router.get("/audit", response_model=AuditListResponse)
+def listar_auditoria(
+    ctx: ActiveContext = Depends(require_permission("correos.audit.view")),
+    db: Session = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> AuditListResponse:
+    """Bitácora de acciones sensibles de la empresa (append-only). Solo admin/supervisor."""
+    items, total = audit_service.listar(db, ctx.company.id, limit=limit, offset=offset)
+    return AuditListResponse(
+        items=[AuditEntry.from_model(e) for e in items],
+        total=total, limit=limit, offset=offset,
+    )
 
 
 def _lista(
@@ -422,3 +510,9 @@ def _nombre_seguro(nombre: str) -> str:
     """Sanea el nombre para la cabecera Content-Disposition (evita inyección de cabecera)."""
     limpio = re.sub(r'[^\w.\- ]', "", nombre or "").strip()
     return limpio[:120] or "documento"
+
+
+def _ip(request: Request) -> str | None:
+    """IP del cliente para la auditoría (informativa). El manejo de proxy es del
+    middleware de la plataforma; aquí solo se lee el peer de la conexión."""
+    return request.client.host if request.client else None

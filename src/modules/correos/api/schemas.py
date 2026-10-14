@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from src.modules.correos.domain.extraction import UMBRAL_DE_CONFIANZA
 from src.modules.correos.infrastructure.models import (
+    AuditLogModel,
     ExtractedRecordModel,
     MailboxConnectionModel,
     ProcessingErrorModel,
@@ -159,6 +160,34 @@ class RecordListResponse(BaseModel):
 class CorreccionRequest(BaseModel):
     """Correcciones campo→valor (texto). Se validan con los objetos de valor y aprueban."""
     correcciones: dict[str, str] = Field(min_length=1)
+
+
+class AuditEntry(BaseModel):
+    """Una acción registrada en la bitácora (append-only)."""
+    id: int
+    actor_id: int | None
+    actor_ip: str | None
+    action: str
+    resource_type: str
+    resource_id: str | None
+    metadata: dict
+    occurred_at: datetime
+
+    @classmethod
+    def from_model(cls, m: AuditLogModel) -> "AuditEntry":
+        return cls(
+            id=m.id, actor_id=m.actor_id, actor_ip=m.actor_ip, action=m.action,
+            resource_type=m.resource_type, resource_id=m.resource_id,
+            metadata=dict(m.audit_metadata or {}), occurred_at=m.occurred_at,
+        )
+
+
+class AuditListResponse(BaseModel):
+    """Página de la bitácora de auditoría."""
+    items: list[AuditEntry]
+    total: int
+    limit: int
+    offset: int
 
 
 def _importe(valor) -> str | None:  # noqa: ANN001 - Decimal | None del modelo

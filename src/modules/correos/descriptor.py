@@ -12,6 +12,9 @@ CORREOS_PERMISSIONS = (
     "correos.record.read",
     "correos.record.update",
     "correos.export.create",
+    # Sufijo `.view` (no .read): solo admin_empresa/supervisor lo reciben en el seed;
+    # la bitácora de auditoría no debe verla cualquier rol de consulta.
+    "correos.audit.view",
 )
 
 descriptor = ModuleDescriptor(

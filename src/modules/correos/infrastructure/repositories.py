@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from src.modules.correos.infrastructure.models import (
     AttachmentModel,
+    AuditLogModel,
     EmailMessageModel,
     ExtractedRecordModel,
     MailboxConnectionModel,
@@ -374,6 +375,39 @@ class SqlRecordRepository:
     def commit(self) -> None:
         """Persiste los cambios hechos sobre un registro obtenido con `get`."""
         self.db.commit()
+
+
+class SqlAuditRepository:
+    """Bitácora de solo-inserción (append-only) de acciones sensibles."""
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def add(
+        self, *, company_id: int, actor_id: int | None, action: str, resource_type: str = "",
+        resource_id: str | None = None, actor_ip: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        self.db.add(AuditLogModel(
+            company_id=company_id, actor_id=actor_id, actor_ip=actor_ip, action=action,
+            resource_type=resource_type, resource_id=resource_id,
+            audit_metadata=metadata or {},
+        ))
+        self.db.commit()
+
+    def listar(
+        self, company_id: int, *, limit: int, offset: int
+    ) -> tuple[list[AuditLogModel], int]:
+        condicion = AuditLogModel.company_id == company_id
+        total = self.db.scalar(
+            select(func.count()).select_from(AuditLogModel).where(condicion)
+        ) or 0
+        items = list(self.db.scalars(
+            select(AuditLogModel).where(condicion)
+            .order_by(AuditLogModel.occurred_at.desc(), AuditLogModel.id.desc())
+            .limit(limit).offset(offset)
+        ))
+        return items, int(total)
 
     def origenes(self, company_id: int, attachment_ids: list[int]) -> dict[int, dict]:
         """Procedencia (correo + nombre de adjunto) por `attachment_id`, en una sola
