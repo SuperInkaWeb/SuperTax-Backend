@@ -101,6 +101,16 @@ class Settings(BaseSettings):
     # Correos: cuántos escaneos (descarga de adjuntos + OCR/IA) corren a la vez en el
     # web (on-demand). Cada uno es I/O (buzón) + CPU (OCR en subproceso); el resto espera.
     CORREOS_MAX_CONCURRENCY: int = 2
+    # OAuth de buzón. Google reutiliza GOOGLE_CLIENT_ID/SECRET (mismo cliente que Drive,
+    # con el scope gmail.readonly). Outlook usa un cliente de Microsoft propio.
+    MS_CLIENT_ID: str = ""
+    MS_CLIENT_SECRET: str = ""
+    MS_TENANT: str = "common"
+    # URL del frontend que recibe el callback OAuth (misma página para ambos proveedores;
+    # debe estar registrada como redirect en las consolas de Google y Microsoft).
+    CORREOS_OAUTH_REDIRECT_URI: str = "http://localhost:5173/correos/oauth/callback"
+    # Validez del `state` cifrado (anti-CSRF/replay): la vuelta del consentimiento.
+    CORREOS_OAUTH_STATE_TTL_SECONDS: int = 600
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""
