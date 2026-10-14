@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     CORREOS_OAUTH_REDIRECT_URI: str = "http://localhost:5173/correos/oauth/callback"
     # Validez del `state` cifrado (anti-CSRF/replay): la vuelta del consentimiento.
     CORREOS_OAUTH_STATE_TTL_SECONDS: int = 600
+    # Tamaño máximo por adjunto descargado (MB). Más grande se rechaza (A04/costo).
+    CORREOS_MAX_ATTACHMENT_MB: int = 25
     # Descarga automatizada (módulo SUNAT / Playwright).
     DESCARGAS_DIR: str = ""  # vacío → carpeta temporal del SO
     GOOGLE_CLIENT_ID: str = ""

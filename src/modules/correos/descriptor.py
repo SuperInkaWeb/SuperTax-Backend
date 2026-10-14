@@ -1,5 +1,6 @@
 """Descriptor del módulo Correos: contrato de auto-registro."""
 from src.modules.correos.api.routes import router
+from src.modules.correos.infrastructure.scan_dispatch import recuperar_pendientes
 from src.platform.modularity import ModuleDescriptor
 
 CORREOS_PERMISSIONS = (
@@ -18,4 +19,5 @@ descriptor = ModuleDescriptor(
     name="Automatización de correos",
     router=router,
     permissions=CORREOS_PERMISSIONS,
+    on_startup=recuperar_pendientes,
 )

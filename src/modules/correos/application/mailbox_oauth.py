@@ -131,6 +131,30 @@ def _leer_state(state: str, company_id: int, user_id: int) -> dict:
     return data
 
 
+def refrescar(provider: str, refresh_token: str) -> dict:
+    """Pide un access token nuevo con el refresh token. Devuelve el cuerpo del
+    proveedor (access_token, expires_in y, a veces, un refresh_token rotado)."""
+    cfg = _cfg(provider)
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": cfg.client_id,
+        "client_secret": cfg.client_secret,
+    }
+    try:
+        resp = httpx.post(cfg.token_endpoint, data=data,
+                          headers={"Accept": "application/json"}, timeout=_TIMEOUT)
+    except httpx.HTTPError as exc:
+        raise OAuthError("No se pudo refrescar el acceso al buzón.", 502) from exc
+    if resp.status_code != httpx.codes.OK:
+        raise OAuthError("El acceso al buzón caducó. Vuelve a conectarlo.", 401)
+    es_json = resp.headers.get("content-type", "").startswith("application/json")
+    cuerpo = resp.json() if es_json else {}
+    if not cuerpo.get("access_token"):
+        raise OAuthError("El acceso al buzón caducó. Vuelve a conectarlo.", 401)
+    return cuerpo
+
+
 def _canjear_codigo(cfg: _ProviderCfg, code: str, verifier: str) -> dict:
     data = {
         "grant_type": "authorization_code",

@@ -11,10 +11,18 @@ from src.modules.correos.api.schemas import (
     AuthorizeRequest,
     AuthorizeResponse,
     CallbackRequest,
+    ErrorSummary,
     MailboxSummary,
+    ScanRequest,
+    ScanSummary,
 )
 from src.modules.correos.application import mailbox_oauth
-from src.modules.correos.infrastructure.repositories import SqlMailboxRepository
+from src.modules.correos.infrastructure.repositories import (
+    SqlErrorRepository,
+    SqlMailboxRepository,
+    SqlScanRepository,
+)
+from src.modules.correos.infrastructure.scan_dispatch import encolar_escaneo
 from src.platform.authorization.deps import require_module, require_permission
 from src.platform.database.session import get_db
 from src.platform.tenancy.current_tenant import ActiveContext
@@ -70,3 +78,78 @@ def desconectar_buzon(
     """Desconecta (borra) una conexión de buzón de la empresa activa."""
     if not SqlMailboxRepository(db).delete(connection_id, ctx.company.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conexión no encontrada")
+
+
+@router.post("/scans", response_model=ScanSummary, status_code=status.HTTP_201_CREATED)
+def lanzar_escaneo(
+    body: ScanRequest,
+    ctx: ActiveContext = Depends(require_permission("correos.scan.create")),
+    db: Session = Depends(get_db),
+) -> ScanSummary:
+    """Crea un escaneo y lo encola (el frontend consulta GET /scans/{id} hasta terminar)."""
+    if SqlMailboxRepository(db).get(body.connection_id, ctx.company.id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conexión de buzón no encontrada")
+    params = {
+        "desde": body.desde.isoformat() if body.desde else None,
+        "hasta": body.hasta.isoformat() if body.hasta else None,
+        "limite_de_mensajes": body.limite_de_mensajes,
+        "carpeta": body.carpeta,
+    }
+    job = SqlScanRepository(db).create(
+        company_id=ctx.company.id, requested_by_id=ctx.user.id,
+        connection_id=body.connection_id, params=params,
+    )
+    encolar_escaneo(job.id)
+    return ScanSummary.from_model(job)
+
+
+@router.get("/scans", response_model=list[ScanSummary])
+def listar_escaneos(
+    ctx: ActiveContext = Depends(require_permission("correos.scan.read")),
+    db: Session = Depends(get_db),
+) -> list[ScanSummary]:
+    """Escaneos de la empresa activa, del más reciente al más antiguo."""
+    jobs = SqlScanRepository(db).list_by_company(ctx.company.id)
+    return [ScanSummary.from_model(j) for j in jobs]
+
+
+@router.get("/scans/{job_id}", response_model=ScanSummary)
+def ver_escaneo(
+    job_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.scan.read")),
+    db: Session = Depends(get_db),
+) -> ScanSummary:
+    """Estado y progreso de un escaneo."""
+    job = SqlScanRepository(db).get(job_id, ctx.company.id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escaneo no encontrado")
+    return ScanSummary.from_model(job)
+
+
+@router.post("/scans/{job_id}/cancel", response_model=ScanSummary)
+def cancelar_escaneo(
+    job_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.scan.create")),
+    db: Session = Depends(get_db),
+) -> ScanSummary:
+    """Pide cancelar un escaneo en cola o en curso (se detiene en el próximo correo)."""
+    repo = SqlScanRepository(db)
+    if not repo.request_cancel(job_id, ctx.company.id):
+        job = repo.get(job_id, ctx.company.id)
+        if job is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escaneo no encontrado")
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="El escaneo ya terminó.")
+    return ScanSummary.from_model(repo.get(job_id, ctx.company.id))
+
+
+@router.get("/scans/{job_id}/errors", response_model=list[ErrorSummary])
+def errores_de_escaneo(
+    job_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.scan.read")),
+    db: Session = Depends(get_db),
+) -> list[ErrorSummary]:
+    """Errores de procesamiento de un escaneo (adjuntos rechazados, fallos del buzón…)."""
+    if SqlScanRepository(db).get(job_id, ctx.company.id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escaneo no encontrado")
+    errores = SqlErrorRepository(db).list_by_job(job_id, ctx.company.id)
+    return [ErrorSummary.from_model(e) for e in errores]
