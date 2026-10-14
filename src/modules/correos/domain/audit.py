@@ -21,3 +21,4 @@ class AuditAction(StrEnum):
     REGISTRO_RECHAZADO = "record.rejected"
     REGISTRO_ELIMINADO = "record.deleted"
     ADJUNTO_DESCARGADO = "attachment.downloaded"
+    DATOS_REINICIADOS = "data.reset"

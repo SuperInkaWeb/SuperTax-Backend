@@ -16,8 +16,19 @@ from src.modules.correos.infrastructure.models import (
     ExtractedRecordModel,
     ReviewStatus,
 )
-from src.modules.correos.infrastructure.report_excel import FilaReporte, generar_reporte
+from src.modules.correos.infrastructure.report_excel import (
+    FilaReporte,
+    generar_csv,
+)
+from src.modules.correos.infrastructure.report_excel import (
+    generar_reporte as generar_xlsx,
+)
 from src.platform.config.settings import settings
+
+_MIME = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "csv": "text/csv; charset=utf-8",
+}
 
 # Etiquetas legibles para el reporte (los valores en BD son códigos en inglés).
 _COMPLETITUD = {
@@ -33,15 +44,21 @@ _REVISION = {
 }
 
 
-def generar_excel(db, company_id: int, filtros: FiltrosRegistro) -> tuple[bytes, int, int]:
-    """Devuelve (xlsx, filas_exportadas, total_que_cumple_el_filtro). Si el total supera
-    el tope, se exportan las primeras `CORREOS_MAX_EXPORT_ROWS` (las más recientes)."""
+def generar_reporte(
+    db, company_id: int, filtros: FiltrosRegistro, *, formato: str = "xlsx",
+    ids: list[int] | None = None,
+) -> tuple[bytes, int, int, str, str]:
+    """Genera el reporte en `formato` (xlsx|csv). Si `ids` viene, exporta solo esos
+    registros (selección del usuario); si no, todo lo filtrado. Devuelve
+    (contenido, filas_exportadas, total, mime, extension). El tope
+    `CORREOS_MAX_EXPORT_ROWS` acota una exportación grande (las más recientes)."""
     limite = settings.CORREOS_MAX_EXPORT_ROWS
     items, total, origenes = record_service.listar(
-        db, company_id, filtros, limit=limite, offset=0
+        db, company_id, filtros, limit=limite, offset=0, ids=ids
     )
     filas = [_a_fila(r, origenes.get(r.attachment_id, {})) for r in items]
-    return generar_reporte(filas), len(filas), total
+    contenido = generar_csv(filas) if formato == "csv" else generar_xlsx(filas)
+    return contenido, len(filas), total, _MIME.get(formato, _MIME["xlsx"]), formato
 
 
 def _a_fila(m: ExtractedRecordModel, origen: dict) -> FilaReporte:

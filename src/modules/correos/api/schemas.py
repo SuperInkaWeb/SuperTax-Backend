@@ -35,6 +35,7 @@ class MailboxSummary(BaseModel):
     provider: str
     account_email: str
     status: str
+    expires_at: datetime | None
     created_at: datetime
 
     @classmethod
@@ -44,6 +45,7 @@ class MailboxSummary(BaseModel):
             provider=m.provider,
             account_email=m.account_email,
             status=m.status,
+            expires_at=m.expires_at,
             created_at=m.created_at,
         )
 

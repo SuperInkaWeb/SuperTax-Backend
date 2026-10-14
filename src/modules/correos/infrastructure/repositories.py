@@ -337,13 +337,14 @@ class SqlRecordRepository:
         periodo: str | None = None, periodo_desde: str | None = None,
         periodo_hasta: str | None = None, fecha_desde: date | None = None,
         fecha_hasta: date | None = None, solo_aprobados: bool = False,
-        solo_pendientes: bool = False,
+        solo_pendientes: bool = False, ids: list[int] | None = None,
     ) -> tuple[list[ExtractedRecordModel], int]:
         """Listado filtrado y paginado + total que cumple el filtro (para la UI)."""
         filtros = self._filtros(
             company_id, job_id=job_id, ruc=ruc, ruc_inquilino=ruc_inquilino, periodo=periodo,
             periodo_desde=periodo_desde, periodo_hasta=periodo_hasta, fecha_desde=fecha_desde,
             fecha_hasta=fecha_hasta, solo_aprobados=solo_aprobados, solo_pendientes=solo_pendientes,
+            ids=ids,
         )
         total = self.db.scalar(
             select(func.count()).select_from(ExtractedRecordModel).where(*filtros)
@@ -439,10 +440,13 @@ class SqlAuditRepository:
     def _filtros(
         company_id: int, *, job_id, ruc, ruc_inquilino, periodo, periodo_desde,
         periodo_hasta, fecha_desde, fecha_hasta, solo_aprobados, solo_pendientes,
+        ids=None,
     ) -> list:
         """Construye las condiciones WHERE compartidas por el listado y su conteo."""
         m = ExtractedRecordModel
         condiciones: list = [m.company_id == company_id]
+        if ids:  # "exportar solo estos": selección explícita del usuario
+            condiciones.append(m.id.in_(ids))
         if job_id is not None:
             condiciones.append(m.job_id == job_id)
         if ruc:

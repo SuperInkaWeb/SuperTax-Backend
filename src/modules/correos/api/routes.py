@@ -35,6 +35,7 @@ from src.modules.correos.application import (
     mailbox_oauth,
     record_service,
     report_service,
+    reset_service,
 )
 from src.modules.correos.application.record_service import CorreccionInvalida, FiltrosRegistro
 from src.modules.correos.domain.audit import AuditAction
@@ -165,6 +166,23 @@ def listar_escaneos(
     return [ScanSummary.from_model(j) for j in jobs]
 
 
+@router.post("/scans/reset", response_model=dict)
+def reiniciar_datos(
+    request: Request,
+    ctx: ActiveContext = Depends(require_permission("correos.scan.create")),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Borra TODOS los registros, adjuntos y correos de la empresa para escanear desde
+    cero (conserva los buzones). Irreversible; el frontend confirma antes de llamar."""
+    resumen = reset_service.reiniciar(db, ctx.company.id)
+    audit_service.registrar(
+        db, company_id=ctx.company.id, actor_id=ctx.user.id,
+        action=AuditAction.DATOS_REINICIADOS, resource_type="company_data",
+        actor_ip=_ip(request), metadata=resumen,
+    )
+    return resumen
+
+
 @router.get("/scans/{job_id}", response_model=ScanSummary)
 def ver_escaneo(
     job_id: int,
@@ -288,14 +306,13 @@ def listar_registros(
     return _lista(db, ctx.company.id, filtros, limit, offset)
 
 
-_MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-
 @router.get("/records/export")
 def exportar_registros(
     request: Request,
     ctx: ActiveContext = Depends(require_permission("correos.export.create")),
     db: Session = Depends(get_db),
+    formato: str = Query(default="xlsx", pattern=r"^(xlsx|csv)$"),
+    ids: str | None = Query(default=None, description="ids separados por coma (solo esos)"),
     job_id: int | None = None,
     ruc: str | None = Query(default=None, max_length=11, pattern=r"^\d{11}$"),
     ruc_inquilino: str | None = Query(default=None, max_length=11, pattern=r"^\d{11}$"),
@@ -306,29 +323,42 @@ def exportar_registros(
     fecha_hasta: date | None = None,
     solo_aprobados: bool = False,
 ) -> StreamingResponse:
-    """Descarga el reporte Excel con los registros que cumplen el filtro (mismos filtros
-    que GET /records). Se genera al vuelo; si el total supera el tope se exportan los
-    más recientes. La cabecera X-Total-Registros informa cuántos cumplían el filtro."""
+    """Descarga el reporte (Excel o CSV) con los registros seleccionados (`ids`) o, si no
+    hay selección, todo lo filtrado (mismos filtros que GET /records). Se genera al vuelo;
+    si el total supera el tope se exportan los más recientes."""
     filtros = FiltrosRegistro(
         job_id=job_id, ruc=ruc, ruc_inquilino=ruc_inquilino, periodo=periodo,
         periodo_desde=periodo_desde, periodo_hasta=periodo_hasta,
         fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, solo_aprobados=solo_aprobados,
     )
-    xlsx, exportadas, total = report_service.generar_excel(db, ctx.company.id, filtros)
+    seleccion = _parse_ids(ids)
+    contenido, exportadas, total, mime, ext = report_service.generar_reporte(
+        db, ctx.company.id, filtros, formato=formato, ids=seleccion,
+    )
     audit_service.registrar(
         db, company_id=ctx.company.id, actor_id=ctx.user.id,
         action=AuditAction.REPORTE_EXPORTADO, resource_type="report",
-        actor_ip=_ip(request), metadata={"filas_exportadas": exportadas, "total": total},
+        actor_ip=_ip(request),
+        metadata={"formato": ext, "filas_exportadas": exportadas, "total": total,
+                  "seleccionados": len(seleccion) if seleccion else 0},
     )
-    nombre = f"reporte-correos-{date.today():%Y%m%d}.xlsx"
+    nombre = f"reporte-correos-{date.today():%Y%m%d}.{ext}"
     return StreamingResponse(
-        io.BytesIO(xlsx), media_type=_MIME_XLSX,
+        io.BytesIO(contenido), media_type=mime,
         headers={
             "Content-Disposition": f'attachment; filename="{nombre}"',
             "X-Total-Registros": str(total),
             "X-Filas-Exportadas": str(exportadas),
         },
     )
+
+
+def _parse_ids(crudo: str | None) -> list[int] | None:
+    """Convierte 'ids=1,2,3' en [1,2,3]; ignora lo no numérico. None si no hay selección."""
+    if not crudo:
+        return None
+    seleccion = [int(x) for x in crudo.split(",") if x.strip().isdigit()]
+    return seleccion or None
 
 
 @router.get("/review", response_model=RecordListResponse)

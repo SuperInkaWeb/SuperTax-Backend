@@ -1,14 +1,20 @@
 """
-Generador del reporte Excel de registros tributarios (constancias de arrendamiento).
+Generadores del reporte de registros tributarios (constancias de arrendamiento):
+Excel (.xlsx) y CSV, compartiendo las mismas columnas y formato de fila.
 
-openpyxl en modo `write_only`: vuelca fila a fila en lugar de mantener la hoja
-entera en memoria, para que un reporte grande no infle la RAM del proceso web. Los
-importes se escriben como NÚMERO con formato de celda (no texto): un Excel donde la
-columna de importes son cadenas no suma, y lo primero que hace un contador es
+Excel con openpyxl en modo `write_only`: vuelca fila a fila en lugar de mantener la
+hoja entera en memoria, para que un reporte grande no infle la RAM del proceso web.
+Los importes se escriben como NÚMERO con formato de celda (no texto): un Excel donde
+la columna de importes son cadenas no suma, y lo primero que hace un contador es
 seleccionar la columna para ver el total.
+
+CSV con BOM UTF-8 (`utf-8-sig`): sin él, Excel en Windows lee el fichero en la
+codificación local y las tildes salen rotas (la queja número uno con exportaciones
+en español).
 """
 from __future__ import annotations
 
+import csv
 import io
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -122,3 +128,13 @@ def _a_celdas(hoja: object, fila: FilaReporte) -> list[object]:
                 celda.value = valor
         celdas.append(celda)
     return celdas
+
+
+def generar_csv(filas: list[FilaReporte]) -> bytes:
+    """Devuelve el CSV (bytes, con BOM UTF-8) con una fila por registro."""
+    bufer = io.StringIO(newline="")
+    escritor = csv.writer(bufer, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+    escritor.writerow([etiqueta for _, etiqueta in COLUMNAS])
+    for fila in filas:
+        escritor.writerow([getattr(fila, clave) for clave, _ in COLUMNAS])
+    return bufer.getvalue().encode("utf-8-sig")

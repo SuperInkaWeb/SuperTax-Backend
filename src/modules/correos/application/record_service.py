@@ -67,7 +67,8 @@ class FiltrosRegistro:
 
 
 def listar(
-    db: Session, company_id: int, filtros: FiltrosRegistro, *, limit: int, offset: int
+    db: Session, company_id: int, filtros: FiltrosRegistro, *, limit: int, offset: int,
+    ids: list[int] | None = None,
 ) -> tuple[list[ExtractedRecordModel], int, dict[int, dict]]:
     """Registros + total + procedencia por `attachment_id` (para enriquecer la vista)."""
     repo = SqlRecordRepository(db)
@@ -77,7 +78,7 @@ def listar(
         periodo=filtros.periodo, periodo_desde=filtros.periodo_desde,
         periodo_hasta=filtros.periodo_hasta, fecha_desde=filtros.fecha_desde,
         fecha_hasta=filtros.fecha_hasta, solo_aprobados=filtros.solo_aprobados,
-        solo_pendientes=filtros.solo_pendientes,
+        solo_pendientes=filtros.solo_pendientes, ids=ids,
     )
     origenes = repo.origenes(company_id, [r.attachment_id for r in items])
     return items, total, origenes

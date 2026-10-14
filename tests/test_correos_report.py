@@ -10,6 +10,7 @@ from src.modules.correos.infrastructure.models import ExtractedRecordModel
 from src.modules.correos.infrastructure.report_excel import (
     COLUMNAS,
     FilaReporte,
+    generar_csv,
     generar_reporte,
 )
 
@@ -57,9 +58,30 @@ def test_a_fila_formatea_estado_fecha_e_importes():
     assert fila.archivo_origen == "recibo.pdf"
 
 
+def test_generar_csv_con_bom_y_cabecera():
+    fila = FilaReporte(ruc_contribuyente=_RUC, importe_pagado="75.00", moneda="PEN")
+    crudo = generar_csv([fila])
+    assert crudo.startswith(b"\xef\xbb\xbf")  # BOM UTF-8 (tildes correctas en Excel)
+    texto = crudo.decode("utf-8-sig")
+    lineas = texto.splitlines()
+    assert lineas[0].split(";")[0] == "RUC Arrendador"
+    assert _RUC in lineas[1]
+
+
+def test_parse_ids():
+    from src.modules.correos.api.routes import _parse_ids
+
+    assert _parse_ids("1,2,3") == [1, 2, 3]
+    assert _parse_ids("1, x ,3") == [1, 3]
+    assert _parse_ids(None) is None
+    assert _parse_ids("") is None
+    assert _parse_ids("abc") is None
+
+
 def test_ruta_export_montada_antes_del_detalle():
     from src.main import create_app
 
     paths = create_app().openapi()["paths"]
     assert "/api/correos/records/export" in paths
     assert "get" in paths["/api/correos/records/export"]
+    assert "/api/correos/scans/reset" in paths  # reiniciar datos
