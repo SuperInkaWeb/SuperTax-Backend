@@ -1,7 +1,7 @@
 """Acceso a datos del módulo Correos (aislamiento por empresa en toda consulta)."""
-from datetime import timedelta
+from datetime import date, timedelta
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from src.modules.correos.infrastructure.models import (
@@ -11,6 +11,7 @@ from src.modules.correos.infrastructure.models import (
     MailboxConnectionModel,
     MailboxStatus,
     ProcessingErrorModel,
+    ReviewStatus,
     ScanJobModel,
     ScanPhase,
     ScanStatus,
@@ -230,6 +231,13 @@ class SqlAttachmentRepository:
             )
         ) is not None
 
+    def get(self, attachment_id: int, company_id: int) -> AttachmentModel | None:
+        return self.db.scalar(
+            select(AttachmentModel).where(
+                AttachmentModel.id == attachment_id, AttachmentModel.company_id == company_id
+            )
+        )
+
     def pendientes_de_extraccion(
         self, company_id: int, job_id: int
     ) -> list[AttachmentModel]:
@@ -313,3 +321,116 @@ class SqlRecordRepository:
         self.db.commit()
         self.db.refresh(registro)
         return registro
+
+    def get(self, record_id: int, company_id: int) -> ExtractedRecordModel | None:
+        return self.db.scalar(
+            select(ExtractedRecordModel).where(
+                ExtractedRecordModel.id == record_id,
+                ExtractedRecordModel.company_id == company_id,
+            )
+        )
+
+    def listar(
+        self, company_id: int, *, limit: int, offset: int,
+        job_id: int | None = None, ruc: str | None = None, ruc_inquilino: str | None = None,
+        periodo: str | None = None, periodo_desde: str | None = None,
+        periodo_hasta: str | None = None, fecha_desde: date | None = None,
+        fecha_hasta: date | None = None, solo_aprobados: bool = False,
+        solo_pendientes: bool = False,
+    ) -> tuple[list[ExtractedRecordModel], int]:
+        """Listado filtrado y paginado + total que cumple el filtro (para la UI)."""
+        filtros = self._filtros(
+            company_id, job_id=job_id, ruc=ruc, ruc_inquilino=ruc_inquilino, periodo=periodo,
+            periodo_desde=periodo_desde, periodo_hasta=periodo_hasta, fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta, solo_aprobados=solo_aprobados, solo_pendientes=solo_pendientes,
+        )
+        total = self.db.scalar(
+            select(func.count()).select_from(ExtractedRecordModel).where(*filtros)
+        ) or 0
+        items = list(self.db.scalars(
+            select(ExtractedRecordModel).where(*filtros)
+            .order_by(ExtractedRecordModel.created_at.desc(), ExtractedRecordModel.id.desc())
+            .limit(limit).offset(offset)
+        ))
+        return items, int(total)
+
+    def contar_pendientes(self, company_id: int) -> int:
+        total = self.db.scalar(
+            select(func.count()).select_from(ExtractedRecordModel).where(
+                ExtractedRecordModel.company_id == company_id,
+                ExtractedRecordModel.estado_de_revision == ReviewStatus.pending.value,
+            )
+        )
+        return int(total or 0)
+
+    def delete(self, record_id: int, company_id: int) -> bool:
+        registro = self.get(record_id, company_id)
+        if registro is None:
+            return False
+        self.db.delete(registro)
+        self.db.commit()
+        return True
+
+    def commit(self) -> None:
+        """Persiste los cambios hechos sobre un registro obtenido con `get`."""
+        self.db.commit()
+
+    def origenes(self, company_id: int, attachment_ids: list[int]) -> dict[int, dict]:
+        """Procedencia (correo + nombre de adjunto) por `attachment_id`, en una sola
+        consulta por lote (evita N+1). La extracción no conoce estas tablas; se unen
+        aquí, en el borde, para que la UI sepa de qué correo salió cada registro."""
+        if not attachment_ids:
+            return {}
+        filas = self.db.execute(
+            select(
+                AttachmentModel.id, AttachmentModel.original_name,
+                EmailMessageModel.sender, EmailMessageModel.subject,
+                EmailMessageModel.received_at,
+            )
+            .join(EmailMessageModel, AttachmentModel.message_id == EmailMessageModel.id)
+            .where(
+                AttachmentModel.company_id == company_id,
+                AttachmentModel.id.in_(attachment_ids),
+            )
+        ).all()
+        return {
+            fila.id: {
+                "nombre_adjunto": fila.original_name, "remitente": fila.sender,
+                "asunto": fila.subject, "recibido_en": fila.received_at,
+            }
+            for fila in filas
+        }
+
+    @staticmethod
+    def _filtros(
+        company_id: int, *, job_id, ruc, ruc_inquilino, periodo, periodo_desde,
+        periodo_hasta, fecha_desde, fecha_hasta, solo_aprobados, solo_pendientes,
+    ) -> list:
+        """Construye las condiciones WHERE compartidas por el listado y su conteo."""
+        m = ExtractedRecordModel
+        condiciones: list = [m.company_id == company_id]
+        if job_id is not None:
+            condiciones.append(m.job_id == job_id)
+        if ruc:
+            condiciones.append(m.ruc_contribuyente == ruc)
+        if ruc_inquilino:
+            condiciones.append(m.ruc_inquilino == ruc_inquilino)
+        if periodo:
+            condiciones.append(m.periodo == periodo)
+        if periodo_desde:  # YYYYMM: el orden lexicográfico es cronológico
+            condiciones.append(m.periodo >= periodo_desde)
+        if periodo_hasta:
+            condiciones.append(m.periodo <= periodo_hasta)
+        if fecha_desde:
+            condiciones.append(m.fecha_de_pago >= fecha_desde)
+        if fecha_hasta:
+            condiciones.append(m.fecha_de_pago <= fecha_hasta)
+        if solo_aprobados:
+            condiciones.append(
+                m.estado_de_revision.in_(
+                    (ReviewStatus.approved.value, ReviewStatus.not_required.value)
+                )
+            )
+        if solo_pendientes:
+            condiciones.append(m.estado_de_revision == ReviewStatus.pending.value)
+        return condiciones

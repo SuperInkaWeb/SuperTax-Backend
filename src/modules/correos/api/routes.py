@@ -6,9 +6,11 @@ escaneos (lanzar, listar, ver, cancelar, errores). El progreso de un escaneo se
 sigue por polling de GET /scans/{id} o en vivo por SSE en /scans/{id}/stream.
 La extracción, la revisión y la exportación llegan después.
 """
+import re
 import time
+from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,14 +19,19 @@ from src.modules.correos.api.schemas import (
     AuthorizeRequest,
     AuthorizeResponse,
     CallbackRequest,
+    CorreccionRequest,
     ErrorSummary,
     MailboxSummary,
+    RecordListResponse,
+    RecordSummary,
     ScanRequest,
     ScanSummary,
 )
-from src.modules.correos.application import mailbox_oauth
+from src.modules.correos.application import mailbox_oauth, record_service
+from src.modules.correos.application.record_service import CorreccionInvalida, FiltrosRegistro
 from src.modules.correos.infrastructure.models import ScanJobModel, ScanStatus
 from src.modules.correos.infrastructure.repositories import (
+    SqlAttachmentRepository,
     SqlErrorRepository,
     SqlMailboxRepository,
     SqlScanRepository,
@@ -33,6 +40,7 @@ from src.modules.correos.infrastructure.scan_dispatch import encolar_escaneo
 from src.platform.authorization.deps import require_module, require_permission
 from src.platform.database.session import SessionLocal, get_db
 from src.platform.identity.auth0 import Auth0Error, validar_token
+from src.platform.storage import FileStorage, get_storage
 from src.platform.tenancy.current_tenant import ActiveContext
 from src.platform.users.models import User
 
@@ -216,3 +224,163 @@ def stream_escaneo(job_id: int, token: str = "", db: Session = Depends(get_db)):
             time.sleep(1)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+# ── Registros extraídos y revisión humana ────────────────────────────
+
+@router.get("/records", response_model=RecordListResponse)
+def listar_registros(
+    ctx: ActiveContext = Depends(require_permission("correos.record.read")),
+    db: Session = Depends(get_db),
+    job_id: int | None = None,
+    ruc: str | None = Query(default=None, max_length=11, pattern=r"^\d{11}$"),
+    ruc_inquilino: str | None = Query(default=None, max_length=11, pattern=r"^\d{11}$"),
+    periodo: str | None = Query(default=None, max_length=6, pattern=r"^\d{6}$"),
+    periodo_desde: str | None = Query(default=None, max_length=6, pattern=r"^\d{6}$"),
+    periodo_hasta: str | None = Query(default=None, max_length=6, pattern=r"^\d{6}$"),
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+    solo_aprobados: bool = False,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> RecordListResponse:
+    """Listado de registros de la empresa activa, filtrable y paginado."""
+    filtros = FiltrosRegistro(
+        job_id=job_id, ruc=ruc, ruc_inquilino=ruc_inquilino, periodo=periodo,
+        periodo_desde=periodo_desde, periodo_hasta=periodo_hasta,
+        fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, solo_aprobados=solo_aprobados,
+    )
+    return _lista(db, ctx.company.id, filtros, limit, offset)
+
+
+@router.get("/review", response_model=RecordListResponse)
+def cola_de_revision(
+    ctx: ActiveContext = Depends(require_permission("correos.record.read")),
+    db: Session = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> RecordListResponse:
+    """Registros que el pipeline no pudo dar por buenos (cola de revisión)."""
+    return _lista(db, ctx.company.id, FiltrosRegistro(solo_pendientes=True), limit, offset)
+
+
+@router.get("/review/count", response_model=dict)
+def pendientes_de_revision(
+    ctx: ActiveContext = Depends(require_permission("correos.record.read")),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Contador de pendientes para el aviso de la interfaz."""
+    return {"pendientes": record_service.contar_pendientes(db, ctx.company.id)}
+
+
+@router.get("/records/{record_id}", response_model=RecordSummary)
+def ver_registro(
+    record_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.record.read")),
+    db: Session = Depends(get_db),
+) -> RecordSummary:
+    """Un registro con su procedencia."""
+    registro, origen = _obtener(db, ctx.company.id, record_id)
+    return RecordSummary.from_model(registro, origen)
+
+
+@router.get("/records/{record_id}/document")
+def ver_documento(
+    record_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.record.read")),
+    db: Session = Depends(get_db),
+    storage: FileStorage = Depends(get_storage),
+) -> Response:
+    """Sirve el adjunto original (autenticado). Se comprueba antes que el registro es
+    de la empresa, así el id de adjunto no sirve para sondear documentos ajenos."""
+    registro, _ = _obtener(db, ctx.company.id, record_id)
+    adjunto = SqlAttachmentRepository(db).get(registro.attachment_id, ctx.company.id)
+    if adjunto is None or not storage.exists(adjunto.storage_key):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Documento no disponible")
+    contenido = storage.read(adjunto.storage_key)
+    disposicion = f'inline; filename="{_nombre_seguro(adjunto.original_name)}"'
+    return Response(
+        content=contenido, media_type=adjunto.mime_type,
+        headers={"Content-Disposition": disposicion},
+    )
+
+
+@router.patch("/records/{record_id}", response_model=RecordSummary)
+def corregir_registro(
+    record_id: int,
+    body: CorreccionRequest,
+    ctx: ActiveContext = Depends(require_permission("correos.record.update")),
+    db: Session = Depends(get_db),
+) -> RecordSummary:
+    """Aplica las correcciones de una persona y aprueba el registro. Los valores pasan
+    por los mismos objetos de valor que la extracción (un humano también teclea mal)."""
+    try:
+        registro = record_service.corregir_y_aprobar(
+            db, ctx.company.id, ctx.user.id, record_id, body.correcciones
+        )
+    except CorreccionInvalida as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.message) from exc
+    if registro is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    return RecordSummary.from_model(registro)
+
+
+@router.post("/records/{record_id}/approve", response_model=RecordSummary)
+def aprobar_registro(
+    record_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.record.update")),
+    db: Session = Depends(get_db),
+) -> RecordSummary:
+    """El revisor confirma que lo extraído es correcto."""
+    registro = record_service.aprobar(db, ctx.company.id, ctx.user.id, record_id)
+    if registro is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    return RecordSummary.from_model(registro)
+
+
+@router.post("/records/{record_id}/reject", response_model=RecordSummary)
+def rechazar_registro(
+    record_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.record.update")),
+    db: Session = Depends(get_db),
+) -> RecordSummary:
+    """Marca el registro como no utilizable (documento ilegible o ajeno)."""
+    registro = record_service.rechazar(db, ctx.company.id, ctx.user.id, record_id)
+    if registro is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    return RecordSummary.from_model(registro)
+
+
+@router.delete("/records/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_registro(
+    record_id: int,
+    ctx: ActiveContext = Depends(require_permission("correos.record.update")),
+    db: Session = Depends(get_db),
+) -> None:
+    """Borra un registro extraído (el adjunto en R2 se conserva, pertenece al escaneo)."""
+    if not record_service.eliminar(db, ctx.company.id, record_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+
+
+def _lista(
+    db: Session, company_id: int, filtros: FiltrosRegistro, limit: int, offset: int
+) -> RecordListResponse:
+    items, total, origenes = record_service.listar(db, company_id, filtros, limit=limit,
+                                                    offset=offset)
+    return RecordListResponse(
+        items=[RecordSummary.from_model(r, origenes.get(r.attachment_id)) for r in items],
+        total=total, limit=limit, offset=offset,
+    )
+
+
+def _obtener(db: Session, company_id: int, record_id: int):
+    resultado = record_service.obtener(db, company_id, record_id)
+    if resultado is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Registro no encontrado")
+    return resultado
+
+
+def _nombre_seguro(nombre: str) -> str:
+    """Sanea el nombre para la cabecera Content-Disposition (evita inyección de cabecera)."""
+    limpio = re.sub(r'[^\w.\- ]', "", nombre or "").strip()
+    return limpio[:120] or "documento"
