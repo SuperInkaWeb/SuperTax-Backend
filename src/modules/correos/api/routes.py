@@ -1,10 +1,16 @@
 """
 Endpoints del módulo Correos (montados bajo /api/correos).
 
-Fase 1-2: conexiones de buzón — listar, vincular por OAuth (Gmail/Outlook) y
-desconectar. El escaneo, la extracción, la revisión y la exportación llegan después.
+Conexiones de buzón (listar, vincular por OAuth Gmail/Outlook, desconectar) y
+escaneos (lanzar, listar, ver, cancelar, errores). El progreso de un escaneo se
+sigue por polling de GET /scans/{id} o en vivo por SSE en /scans/{id}/stream.
+La extracción, la revisión y la exportación llegan después.
 """
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.modules.correos.api.schemas import (
@@ -17,6 +23,7 @@ from src.modules.correos.api.schemas import (
     ScanSummary,
 )
 from src.modules.correos.application import mailbox_oauth
+from src.modules.correos.infrastructure.models import ScanJobModel, ScanStatus
 from src.modules.correos.infrastructure.repositories import (
     SqlErrorRepository,
     SqlMailboxRepository,
@@ -24,8 +31,16 @@ from src.modules.correos.infrastructure.repositories import (
 )
 from src.modules.correos.infrastructure.scan_dispatch import encolar_escaneo
 from src.platform.authorization.deps import require_module, require_permission
-from src.platform.database.session import get_db
+from src.platform.database.session import SessionLocal, get_db
+from src.platform.identity.auth0 import Auth0Error, validar_token
 from src.platform.tenancy.current_tenant import ActiveContext
+from src.platform.users.models import User
+
+_ESTADOS_FINALES = (
+    ScanStatus.completed.value,
+    ScanStatus.failed.value,
+    ScanStatus.cancelled.value,
+)
 
 router = APIRouter(tags=["correos"], dependencies=[Depends(require_module("correos"))])
 
@@ -153,3 +168,51 @@ def errores_de_escaneo(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escaneo no encontrado")
     errores = SqlErrorRepository(db).list_by_job(job_id, ctx.company.id)
     return [ErrorSummary.from_model(e) for e in errores]
+
+
+@router.get("/scans/{job_id}/stream")
+def stream_escaneo(job_id: int, token: str = "", db: Session = Depends(get_db)):
+    """
+    Progreso del escaneo en vivo por SSE (alternativa al polling de GET /scans/{id}).
+
+    Auth manual: EventSource no envía cabeceras, así que el token Auth0 llega por
+    query param y se comprueba que el solicitante sea quien lanzó el escaneo. El
+    chequeo usa la sesión del request; el streaming abre sesiones cortas propias
+    para no retener una conexión en transacción durante minutos.
+    """
+    job = db.scalar(select(ScanJobModel).where(ScanJobModel.id == job_id))
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Escaneo no encontrado")
+    try:
+        claims = validar_token(token)
+    except Auth0Error as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="No autorizado") from exc
+    user = db.scalar(select(User).where(User.auth0_sub == claims.get("sub")))
+    if user is None or job.requested_by_id != user.id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="No autorizado")
+    company_id = job.company_id
+    db.rollback()
+
+    def stream():
+        ultimo = ""
+        while True:
+            sesion = SessionLocal()
+            try:
+                fila = SqlScanRepository(sesion).get(job_id, company_id)
+                if fila is None:
+                    yield "data: __FIN__\n\n"
+                    return
+                payload = ScanSummary.from_model(fila).model_dump_json()
+                estado = fila.status
+            finally:
+                sesion.close()
+            if payload != ultimo:
+                ultimo = payload
+                yield f"event: progress\ndata: {payload}\n\n"
+            if estado in _ESTADOS_FINALES:
+                yield "data: __FIN__\n\n"
+                return
+            yield ": heartbeat\n\n"
+            time.sleep(1)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")

@@ -51,3 +51,4 @@ def test_rutas_scan_montadas():
     assert "/api/correos/scans" in paths
     assert "/api/correos/scans/{job_id}/cancel" in paths
     assert "/api/correos/scans/{job_id}/errors" in paths
+    assert "/api/correos/scans/{job_id}/stream" in paths
