@@ -94,6 +94,20 @@ def test_nombre_seguro_limpia_caracteres_peligrosos():
 
 # ── Rutas montadas ───────────────────────────────────────────────────
 
+def test_record_repo_conserva_sus_metodos():
+    # Guard: un refactor no debe dejar métodos del repo en otra clase (como pasó con
+    # _filtros/origenes, que se colaron en SqlAuditRepository y rompían el listado).
+    from src.modules.correos.infrastructure.repositories import (
+        SqlAuditRepository,
+        SqlRecordRepository,
+    )
+
+    for metodo in ("listar", "get", "create", "delete", "contar_pendientes",
+                   "origenes", "_filtros", "commit", "existe_para_adjunto"):
+        assert hasattr(SqlRecordRepository, metodo), f"SqlRecordRepository sin {metodo}"
+    assert not hasattr(SqlAuditRepository, "_filtros")
+
+
 def test_rutas_records_montadas():
     from src.main import create_app
 
