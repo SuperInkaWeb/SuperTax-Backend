@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     # Tope de filas que una descarga filtrada puede generar (defensa A04 / costo).
     DATAFILTER_MAX_DOWNLOAD_ROWS: int = 5_000_000
     # Tamaño máximo de archivo a subir (MB). Defensa contra abuso / costo (A04).
-    DATAFILTER_MAX_UPLOAD_MB: int = 2048
+    DATAFILTER_MAX_UPLOAD_MB: int = 3072
     # Segundos máximos por consulta DuckDB antes de cortarla (0 = sin tope). Evita que
     # una consulta patológica retenga RAM/CPU indefinidamente (defensa A04 / costo).
     DATAFILTER_QUERY_TIMEOUT_SECONDS: int = 120
