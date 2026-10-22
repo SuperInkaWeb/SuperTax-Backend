@@ -12,9 +12,9 @@ from src.platform.authorization.models import (
     CompanyModuleStatus,
     Role,
 )
+from src.platform.credentials import vault
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
-from src.platform.security import decrypt_field
 from src.platform.tenancy.models import Company, Membership
 from src.platform.users.models import User
 from src.seed import seed
@@ -65,12 +65,20 @@ def test_credenciales_sunat_se_cifran(db_session):
     assert "clave" not in body
     assert body["usuario"] == "USUARIO1"
 
-    creds = db_session.scalar(
-        select(SunatCredentialsModel).where(SunatCredentialsModel.company_id == empresa.id)
+    # La fuente única ahora es la bóveda de plataforma, no la tabla legacy del módulo.
+    sol = vault.get(db_session, empresa.id, vault.KIND_SOL)
+    assert sol is not None
+    assert sol.secret_enc != "claveSOL"  # cifrada en reposo
+    assert sol.secret == "claveSOL"
+    assert sol.identifier == "USUARIO1"
+    assert (
+        db_session.scalar(
+            select(SunatCredentialsModel).where(
+                SunatCredentialsModel.company_id == empresa.id
+            )
+        )
+        is None
     )
-    assert creds.clave_enc != "claveSOL"
-    assert decrypt_field(creds.clave_enc) == "claveSOL"
-    assert decrypt_field(creds.usuario_enc) == "USUARIO1"
 
 
 def test_modulo_sunat_no_contratado_da_403(db_session):
@@ -162,11 +170,10 @@ def test_iniciar_clave_vacia_usa_guardadas_no_422(db_session):
     adelante con 400 ("Debes subir un archivo"), pero jamás con 422 por la clave.
     """
     from src.modules.sunat.application.credentials import set_credentials
-    from src.modules.sunat.infrastructure.repositories import SqlSunatCredentialsRepository
 
     user, empresa = _escenario(db_session, role_key="operador")
     set_credentials(
-        SqlSunatCredentialsRepository(db_session),
+        db_session,
         company_id=empresa.id,
         user_id=user.id,
         ruc="20700000001",

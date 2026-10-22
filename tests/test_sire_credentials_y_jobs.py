@@ -12,6 +12,7 @@ from src.platform.authorization.models import (
     CompanyModuleStatus,
     Role,
 )
+from src.platform.credentials import vault
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
 from src.platform.security import decrypt_field, encrypt_field
@@ -93,11 +94,24 @@ def test_credenciales_se_cifran_y_no_se_exponen(db_session):
     assert body["usuario_sol"] == "USUARIO1"
     assert "clave_sol" not in body and "client_secret" not in body  # secretos nunca
 
-    creds = db_session.scalar(
-        select(SireCredentialsModel).where(SireCredentialsModel.company_id == empresa.id)
+    # La fuente única ahora es la bóveda de plataforma; la credencial SOL y la de
+    # API quedan como clases separadas, no en la tabla legacy del módulo.
+    sol = vault.get(db_session, empresa.id, vault.KIND_SOL)
+    api = vault.get(db_session, empresa.id, vault.KIND_SIRE_API)
+    assert sol is not None and api is not None
+    assert sol.secret_enc != "secretoSOL"  # cifrado en reposo
+    assert sol.secret == "secretoSOL"
+    assert sol.identifier == "USUARIO1"
+    assert api.identifier == "cid-123"
+    assert api.secret == "secretCID"
+    assert (
+        db_session.scalar(
+            select(SireCredentialsModel).where(
+                SireCredentialsModel.company_id == empresa.id
+            )
+        )
+        is None
     )
-    assert creds.clave_sol_enc != "secretoSOL"  # cifrado en reposo
-    assert decrypt_field(creds.clave_sol_enc) == "secretoSOL"
 
 
 def test_crear_job_guarda_archivo_y_queda_en_cola(db_session, tmp_path):
