@@ -40,7 +40,6 @@ from src.modules.sunat.infrastructure.report_excel import generar_reporte
 from src.modules.sunat.infrastructure.repositories import (
     SqlDriveTokenRepository,
     SqlJobResultRepository,
-    SqlSunatCredentialsRepository,
     SqlSunatJobRepository,
 )
 from src.platform.authorization.deps import require_module, require_permission
@@ -123,7 +122,7 @@ def credentials_status(
     ctx: ActiveContext = Depends(require_permission("sunat.credentials.manage")),
     db: Session = Depends(get_db),
 ) -> CredentialsStatusResponse:
-    estado = get_credentials_status(SqlSunatCredentialsRepository(db), ctx.company.id)
+    estado = get_credentials_status(db, ctx.company.id)
     return CredentialsStatusResponse.model_validate(estado)
 
 
@@ -133,10 +132,9 @@ def upsert_credentials(
     ctx: ActiveContext = Depends(require_permission("sunat.credentials.manage")),
     db: Session = Depends(get_db),
 ) -> CredentialsStatusResponse:
-    repo = SqlSunatCredentialsRepository(db)
     try:
         set_credentials(
-            repo,
+            db,
             company_id=ctx.company.id,
             user_id=ctx.user.id,
             ruc=payload.ruc,
@@ -146,7 +144,7 @@ def upsert_credentials(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return CredentialsStatusResponse.model_validate(
-        get_credentials_status(repo, ctx.company.id)
+        get_credentials_status(db, ctx.company.id)
     )
 
 

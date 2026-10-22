@@ -13,10 +13,7 @@ from sqlalchemy.orm import Session
 from src.modules.sunat.application import credentials as sunat_creds
 from src.modules.sunat.infrastructure import input_parser, job_queue
 from src.modules.sunat.infrastructure import jobs as runner
-from src.modules.sunat.infrastructure.repositories import (
-    SqlDriveTokenRepository,
-    SqlSunatCredentialsRepository,
-)
+from src.modules.sunat.infrastructure.repositories import SqlDriveTokenRepository
 from src.platform.security import decrypt_field
 from src.platform.storage.base import FileStorage
 
@@ -82,7 +79,7 @@ def _resolver_login(
     """Si el form no trae clave, usa las credenciales SOL guardadas de la empresa."""
     if clave:
         return ruc, usuario, clave
-    saved = sunat_creds.get_saved_login(SqlSunatCredentialsRepository(db), company_id)
+    saved = sunat_creds.get_saved_login(db, company_id)
     if saved is None:
         raise SunatJobError("Ingresa la clave SOL o guárdala en la pestaña Credenciales")
     return saved

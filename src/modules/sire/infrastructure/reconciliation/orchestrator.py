@@ -41,6 +41,7 @@ from src.modules.sire.infrastructure.repositories import (
 from src.modules.sire.infrastructure.sunat import compras as sunat_compras
 from src.modules.sire.infrastructure.sunat import ventas as sunat_ventas
 from src.modules.sire.infrastructure.sunat.auth import get_sunat_token
+from src.platform.credentials import vault
 from src.platform.database.base import utcnow
 from src.platform.tenancy.models import Company
 
@@ -94,6 +95,32 @@ def _clientes(tipo_libro: TipoLibro):
         sunat_ventas.solicitar_export_ventas,
         sunat_ventas.consultar_ticket_ventas,
         sunat_ventas.descargar_ticket_ventas,
+    )
+
+
+def _cargar_credenciales(db: Session, company_id: int):
+    """
+    Credenciales SUNAT de la empresa desde la bóveda única de plataforma (clases
+    `sol` + `sire_api`), con *fallback* al almacén legacy del módulo.
+
+    Devuelve un objeto con los atributos que consume `_token_factory`
+    (`usuario_sol`, `clave_sol_enc`, `client_id`, `client_secret_enc`), o None si
+    la empresa no tiene credenciales. El secreto viaja cifrado: la ruta de
+    autenticación lo descifra con la misma clave, sin cambios.
+    """
+    sol = vault.get(db, company_id, vault.KIND_SOL)
+    api = vault.get(db, company_id, vault.KIND_SIRE_API)
+    if sol is not None and api is not None:
+        return SimpleNamespace(
+            usuario_sol=sol.identifier,
+            clave_sol_enc=sol.secret_enc,
+            client_id=api.identifier,
+            client_secret_enc=api.secret_enc,
+        )
+    return db.scalar(
+        select(SireCredentialsModel).where(
+            SireCredentialsModel.company_id == company_id
+        )
     )
 
 
@@ -153,9 +180,7 @@ async def consultar_propuesta_disponible(
         return no_disponible
 
     company = db.get(Company, company_id)
-    creds = db.scalar(
-        select(SireCredentialsModel).where(SireCredentialsModel.company_id == company_id)
-    )
+    creds = _cargar_credenciales(db, company_id)
     if company is None or creds is None:
         return no_disponible
 
@@ -209,11 +234,7 @@ async def procesar_job(db: Session, job_id: int) -> None:
     if job is None:
         return
     company = db.get(Company, job.company_id)
-    creds = db.scalar(
-        select(SireCredentialsModel).where(
-            SireCredentialsModel.company_id == job.company_id
-        )
-    )
+    creds = _cargar_credenciales(db, job.company_id)
     if company is None or creds is None:
         repo.mark_error(job_id, "Faltan la empresa o las credenciales SUNAT")
         return

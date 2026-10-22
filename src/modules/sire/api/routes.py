@@ -41,7 +41,6 @@ from src.modules.sire.infrastructure.reconciliation.orchestrator import (
     consultar_propuesta_disponible,
 )
 from src.modules.sire.infrastructure.repositories import (
-    SqlCredentialsRepository,
     SqlFileMappingRepository,
     SqlReconciliationRepository,
 )
@@ -252,7 +251,7 @@ def credentials_status(
     ctx: ActiveContext = Depends(require_permission("sire.credentials.manage")),
     db: Session = Depends(get_db),
 ) -> CredentialsStatusResponse:
-    estado = get_credentials_status(SqlCredentialsRepository(db), ctx.company.id)
+    estado = get_credentials_status(db, ctx.company.id)
     return CredentialsStatusResponse.model_validate(estado)
 
 
@@ -262,10 +261,9 @@ def upsert_credentials(
     ctx: ActiveContext = Depends(require_permission("sire.credentials.manage")),
     db: Session = Depends(get_db),
 ) -> CredentialsStatusResponse:
-    repo = SqlCredentialsRepository(db)
     try:
         set_credentials(
-            repo,
+            db,
             company_id=ctx.company.id,
             user_id=ctx.user.id,
             usuario_sol=payload.usuario_sol,
@@ -276,7 +274,7 @@ def upsert_credentials(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return CredentialsStatusResponse.model_validate(
-        get_credentials_status(repo, ctx.company.id)
+        get_credentials_status(db, ctx.company.id)
     )
 
 

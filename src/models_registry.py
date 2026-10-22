@@ -18,6 +18,7 @@ from src.modules.scanner.infrastructure import models as _scanner  # noqa: F401
 from src.modules.sire.infrastructure import models as _sire  # noqa: F401
 from src.modules.sunat.infrastructure import models as _sunat  # noqa: F401
 from src.platform.authorization import models as _authz  # noqa: F401
+from src.platform.credentials import models as _credentials  # noqa: F401
 from src.platform.onboarding import models as _onboarding  # noqa: F401
 from src.platform.support import models as _support  # noqa: F401
 from src.platform.tenancy import models as _tenancy  # noqa: F401
