@@ -161,6 +161,34 @@ def build_export(
     return ruta, media_type, nombre
 
 
+def build_export_r2(
+    db: Session, dataset_id: int, company_id: int, *,
+    filtro: FilterGroup | None, seleccion: list[str], orden: list[SortSpec],
+    search: str | None, formato: str, delimiter_char: str | None,
+) -> tuple[str, str, str]:
+    """Como `build_export`, pero DuckDB escribe el resultado DIRECTO a R2 (vía httpfs)
+    en vez de a un temporal local. Devuelve (clave_en_R2, media_type, nombre) para
+    firmar una URL de descarga. Evita que el resultado grande cruce el backend."""
+    ds = requerir_listo(db, dataset_id, company_id)
+    valid = columnas_validas(ds)
+    where_sql, params = query_builder.build_where(filtro, valid)
+    where_sql, params = query_builder.apply_search(where_sql, params, search, valid)
+    select_sql = query_builder.build_select(seleccion, valid)
+    order_sql = query_builder.build_order_by(orden, valid)
+    parquet = locator_parquet(company_id, dataset_id)
+
+    with heavy.gate():
+        matched = duckdb_engine.count_matches(parquet, where_sql, params)
+        _guard_download(matched, formato)
+        key = storage_access.export_key(company_id, dataset_id, formato)
+        dest_locator = storage_access.locator(key)
+        duckdb_engine.export_to_file(
+            parquet, select_sql, where_sql, order_sql, params, dest_locator, formato, delimiter_char
+        )
+    nombre = f"{_sanitize(ds.original_filename)}_filtrado.{formato}"
+    return key, _MEDIA_TYPES[formato], nombre
+
+
 def eliminar(db: Session, dataset_id: int, company_id: int) -> bool:
     """Borra el dataset: sus archivos en storage (crudo + Parquet) y su fila."""
     repo = SqlDatasetRepository(db)

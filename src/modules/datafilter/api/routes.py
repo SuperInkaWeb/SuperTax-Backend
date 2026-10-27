@@ -18,6 +18,7 @@ from src.modules.datafilter.api.schemas import (
     DatasetSummary,
     DistinctValuesResponse,
     DownloadFormat,
+    DownloadPresignResponse,
     DownloadRequest,
     PreviewRequest,
     PreviewResponse,
@@ -360,6 +361,32 @@ def descargar(
         path=ruta, media_type=media_type, filename=nombre,
         background=BackgroundTask(os.remove, ruta),  # borra el temporal tras enviarlo
     )
+
+
+@router.post("/datasets/{dataset_id}/download/presign", response_model=DownloadPresignResponse)
+def presignar_descarga(
+    dataset_id: int,
+    body: DownloadRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> DownloadPresignResponse:
+    """Escribe el resultado filtrado DIRECTO a R2 y devuelve una URL firmada para
+    bajarlo sin pasar por el backend (evita el timeout del borde con resultados
+    grandes). En dev/local devuelve `mode=single` para usar la descarga clásica."""
+    if not storage_access.usa_s3():
+        return DownloadPresignResponse(mode="single")
+    delimiter = body.delimiter.char if body.format is DownloadFormat.TXT else None
+    try:
+        key, media_type, nombre = query.build_export_r2(
+            db, dataset_id, ctx.company.id,
+            filtro=body.filter, seleccion=body.select, orden=body.sort, search=body.search,
+            formato=body.format.value, delimiter_char=delimiter,
+        )
+    except (query.DatasetNotFound, query.DatasetNotReady, query.DownloadTooLarge,
+            InvalidFilterError, QueryTimeout) as exc:
+        raise http_error(exc) from exc
+    url = storage_access.firmar_descarga(key, nombre, media_type, _PRESIGN_EXPIRA)
+    return DownloadPresignResponse(mode="r2", url=url, filename=nombre)
 
 
 @router.delete("/datasets/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)

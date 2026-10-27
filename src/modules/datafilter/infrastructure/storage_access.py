@@ -34,6 +34,15 @@ def parquet_key(company_id: int, dataset_id: int) -> str:
     return f"{_PREFIX}/{company_id}/{dataset_id}/data.parquet"
 
 
+def export_key(company_id: int, dataset_id: int, formato: str) -> str:
+    """Clave del resultado exportado para descarga directa desde R2.
+
+    Determinista por (dataset, formato): cada descarga sobrescribe la anterior, así
+    no se acumulan objetos (conviene además una regla de ciclo de vida en el bucket)."""
+    ext = formato.lstrip(".").lower()
+    return f"{_PREFIX}/{company_id}/{dataset_id}/exports/filtrado.{ext}"
+
+
 def locator(key: str) -> str:
     """Locator para DuckDB: `s3://bucket/clave` (R2) o ruta local absoluta."""
     if usa_s3():
@@ -139,3 +148,18 @@ def tamano(key: str) -> int:
     """Tamaño real del objeto en R2 (para validar el máximo tras completar)."""
     head = _s3_client().head_object(Bucket=settings.S3_BUCKET, Key=key)
     return head["ContentLength"]
+
+
+def firmar_descarga(key: str, filename: str, media_type: str, expira_segundos: int) -> str:
+    """URL firmada (GET) para bajar un objeto DIRECTO de R2 como adjunto, con su
+    nombre y tipo. Evita que el resultado grande pase por el borde del hosting."""
+    return _s3_client().generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": settings.S3_BUCKET,
+            "Key": key,
+            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            "ResponseContentType": media_type,
+        },
+        ExpiresIn=expira_segundos,
+    )

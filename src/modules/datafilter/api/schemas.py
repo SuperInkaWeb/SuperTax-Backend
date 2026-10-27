@@ -80,6 +80,13 @@ class UploadAbortRequest(BaseModel):
     dataset_id: int
 
 
+class DownloadPresignResponse(BaseModel):
+    """`r2` = bajar directo de R2 por `url`; `single` = usar la descarga por backend."""
+    mode: Literal["single", "r2"]
+    url: str | None = None
+    filename: str | None = None
+
+
 class FilterRequest(BaseModel):
     """Base de las peticiones que filtran: árbol de filtros + proyección + orden."""
     filter: FilterGroup | None = None   # None o grupo vacío = sin filtro (todas las filas)
