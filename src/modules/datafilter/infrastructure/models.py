@@ -62,7 +62,8 @@ class DatasetModel(Base):
     parquet_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     source_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # UploadId de la subida multipart en curso (directo a R2); null cuando no hay una.
-    multipart_upload_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Text (no String(255)): el UploadId de R2 supera los 255 caracteres.
+    multipart_upload_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
