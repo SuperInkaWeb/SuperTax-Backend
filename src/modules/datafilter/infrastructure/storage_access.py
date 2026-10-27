@@ -17,6 +17,10 @@ from botocore.config import Config
 from src.platform.config.settings import settings
 
 _PREFIX = "datafilter"
+# Prefijo APARTE (de nivel superior) para las copias temporales de descarga, de
+# modo que una regla de ciclo de vida del bucket pueda expirarlas apuntando solo a
+# este prefijo, sin tocar los datasets (`datafilter/`) ni otros módulos.
+_EXPORT_PREFIX = "datafilter-exports"
 
 
 def usa_s3() -> bool:
@@ -42,7 +46,7 @@ def export_key(company_id: int, dataset_id: int, formato: str, sufijo: str = "fi
     vida en el bucket). El sufijo separa los distintos exportables (filtrado,
     columnas, corregido, sin_duplicados, reporte)."""
     ext = formato.lstrip(".").lower()
-    return f"{_PREFIX}/{company_id}/{dataset_id}/exports/{sufijo}.{ext}"
+    return f"{_EXPORT_PREFIX}/{company_id}/{dataset_id}/{sufijo}.{ext}"
 
 
 def locator(key: str) -> str:
