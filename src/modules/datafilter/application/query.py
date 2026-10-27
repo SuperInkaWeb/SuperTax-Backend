@@ -79,6 +79,19 @@ def preparar_destino_export(
     return handle.name, _MEDIA_TYPES[formato], nombre
 
 
+def destino_export_r2(
+    ds: DatasetModel, company_id: int, dataset_id: int, formato: str, matched: int, sufijo: str
+) -> tuple[str, str, str, str]:
+    """Como `preparar_destino_export` pero el destino es una clave en R2 (para
+    descarga directa). Devuelve (clave_en_R2, locator_de_escritura, media_type,
+    nombre); el llamador escribe con export_to_file(...) al locator. Compartido por
+    la descarga filtrada y las de análisis (DRY)."""
+    _guard_download(matched, formato)
+    key = storage_access.export_key(company_id, dataset_id, formato, sufijo)
+    nombre = f"{_sanitize(ds.original_filename)}_{sufijo}.{formato}"
+    return key, storage_access.locator(key), _MEDIA_TYPES[formato], nombre
+
+
 def preview(
     db: Session, dataset_id: int, company_id: int, *,
     filtro: FilterGroup | None, seleccion: list[str], orden: list[SortSpec],
@@ -179,14 +192,13 @@ def build_export_r2(
 
     with heavy.gate():
         matched = duckdb_engine.count_matches(parquet, where_sql, params)
-        _guard_download(matched, formato)
-        key = storage_access.export_key(company_id, dataset_id, formato)
-        dest_locator = storage_access.locator(key)
+        key, dest_locator, media_type, nombre = destino_export_r2(
+            ds, company_id, dataset_id, formato, matched, "filtrado"
+        )
         duckdb_engine.export_to_file(
             parquet, select_sql, where_sql, order_sql, params, dest_locator, formato, delimiter_char
         )
-    nombre = f"{_sanitize(ds.original_filename)}_filtrado.{formato}"
-    return key, _MEDIA_TYPES[formato], nombre
+    return key, media_type, nombre
 
 
 def eliminar(db: Session, dataset_id: int, company_id: int) -> bool:

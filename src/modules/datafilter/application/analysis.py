@@ -78,12 +78,26 @@ def run_compute(
     return cols, rows, total
 
 
+def _destino(
+    ds, company_id: int, dataset_id: int, formato: str, matched: int, sufijo: str, a_r2: bool
+) -> tuple[str, str, str, str]:
+    """Resuelve el destino de una descarga: en R2 (clave + locator de escritura) o en
+    un temporal local. Devuelve (salida, destino_escritura, media_type, nombre), donde
+    `salida` es lo que se retorna (clave en R2 o ruta local) y `destino_escritura` es
+    adonde escribe el export."""
+    if a_r2:
+        return query.destino_export_r2(ds, company_id, dataset_id, formato, matched, sufijo)
+    ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, sufijo)
+    return ruta, ruta, media, nombre
+
+
 def export_compute(
     db: Session, dataset_id: int, company_id: int, *,
     filtro: FilterGroup | None, columnas: list[ComputedColumn],
-    formato: str, delimiter_char: str | None,
+    formato: str, delimiter_char: str | None, a_r2: bool = False,
 ) -> tuple[str, str, str]:
-    """Descarga TODAS las filas con las columnas calculadas. Devuelve (ruta, media, nombre)."""
+    """Descarga TODAS las filas con las columnas calculadas. `a_r2=True` escribe el
+    resultado en R2 y devuelve (clave, media, nombre); si no, (ruta_temporal, media, nombre)."""
     ds = query.requerir_listo(db, dataset_id, company_id)
     valid = query.columnas_validas(ds)
     where_sql, where_params = query_builder.build_where(filtro, valid)
@@ -91,12 +105,14 @@ def export_compute(
     parquet = query.locator_parquet(company_id, dataset_id)
     with heavy.gate():
         matched = duckdb_engine.count_matches(parquet, where_sql, where_params)
-        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "columnas")
+        salida, destino, media, nombre = _destino(
+            ds, company_id, dataset_id, formato, matched, "columnas", a_r2
+        )
         duckdb_engine.export_to_file(
             parquet, select_sql, where_sql, "", compute_params + where_params,
-            ruta, formato, delimiter_char,
+            destino, formato, delimiter_char,
         )
-    return ruta, media, nombre
+    return salida, media, nombre
 
 
 # ── Buscar y reemplazar por columna ──────────────────────────────────────
@@ -125,9 +141,9 @@ def run_replace(
 def export_replace(
     db: Session, dataset_id: int, company_id: int, *,
     filtro: FilterGroup | None, replacements: list[ReplacementRule],
-    formato: str, delimiter_char: str | None,
+    formato: str, delimiter_char: str | None, a_r2: bool = False,
 ) -> tuple[str, str, str]:
-    """Descarga TODAS las filas ya corregidas. Devuelve (ruta, media, nombre)."""
+    """Descarga TODAS las filas ya corregidas. `a_r2=True` → (clave_R2, media, nombre)."""
     ds = query.requerir_listo(db, dataset_id, company_id)
     valid = query.columnas_validas(ds)
     where_sql, where_params = query_builder.build_where(filtro, valid)
@@ -136,11 +152,14 @@ def export_replace(
     parquet = query.locator_parquet(company_id, dataset_id)
     with heavy.gate():
         matched = duckdb_engine.count_matches(parquet, where_sql, where_params)
-        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "corregido")
-        duckdb_engine.export_to_file(
-            parquet, select_sql, where_sql, "", params + where_params, ruta, formato, delimiter_char
+        salida, destino, media, nombre = _destino(
+            ds, company_id, dataset_id, formato, matched, "corregido", a_r2
         )
-    return ruta, media, nombre
+        duckdb_engine.export_to_file(
+            parquet, select_sql, where_sql, "", params + where_params,
+            destino, formato, delimiter_char,
+        )
+    return salida, media, nombre
 
 
 # ── Eliminar duplicados ──────────────────────────────────────────────────
@@ -171,9 +190,9 @@ def run_dedupe(
 def export_dedupe(
     db: Session, dataset_id: int, company_id: int, *,
     filtro: FilterGroup | None, key_columns: list[str],
-    formato: str, delimiter_char: str | None,
+    formato: str, delimiter_char: str | None, a_r2: bool = False,
 ) -> tuple[str, str, str]:
-    """Descarga TODAS las filas sin duplicados. Devuelve (ruta, media, nombre)."""
+    """Descarga TODAS las filas sin duplicados. `a_r2=True` → (clave_R2, media, nombre)."""
     ds = query.requerir_listo(db, dataset_id, company_id)
     valid = query.columnas_validas(ds)
     where_sql, where_params = query_builder.build_where(filtro, valid)
@@ -183,11 +202,14 @@ def export_dedupe(
         matched = duckdb_engine.dedupe_count(
             parquet, select_sql, where_sql, qualify_sql, where_params
         )
-        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "sin_duplicados")
-        duckdb_engine.dedupe_export_to_file(
-            parquet, select_sql, where_sql, qualify_sql, where_params, ruta, formato, delimiter_char
+        salida, destino, media, nombre = _destino(
+            ds, company_id, dataset_id, formato, matched, "sin_duplicados", a_r2
         )
-    return ruta, media, nombre
+        duckdb_engine.dedupe_export_to_file(
+            parquet, select_sql, where_sql, qualify_sql, where_params,
+            destino, formato, delimiter_char,
+        )
+    return salida, media, nombre
 
 
 # ── Estadísticas por columna ─────────────────────────────────────────────
@@ -266,9 +288,9 @@ def run_pivot(
 
 def export_pivot(
     db: Session, dataset_id: int, company_id: int, *,
-    spec: PivotSpec, formato: str, delimiter_char: str | None,
+    spec: PivotSpec, formato: str, delimiter_char: str | None, a_r2: bool = False,
 ) -> tuple[str, str, str]:
-    """Descarga el reporte pivote COMPLETO como archivo. Devuelve (ruta, media, nombre)."""
+    """Descarga el reporte pivote COMPLETO. `a_r2=True` → (clave_R2, media, nombre)."""
     ds, valid, numeric, where_sql, where_params, pivot_values = _pivot_context(
         db, dataset_id, company_id, spec
     )
@@ -278,12 +300,14 @@ def export_pivot(
     parquet = query.locator_parquet(company_id, dataset_id)
     with heavy.gate():
         matched = duckdb_engine.pivot_count(parquet, group_cols_sql, where_sql, where_params)
-        ruta, media, nombre = query.preparar_destino_export(ds, formato, matched, "reporte")
+        salida, destino, media, nombre = _destino(
+            ds, company_id, dataset_id, formato, matched, "reporte", a_r2
+        )
         duckdb_engine.pivot_export_to_file(
             parquet, select_sql, group_cols_sql, where_sql, params + where_params,
-            ruta, formato, delimiter_char, order_sql,
+            destino, formato, delimiter_char, order_sql,
         )
-    return ruta, media, nombre
+    return salida, media, nombre
 
 
 def _pivot_context(

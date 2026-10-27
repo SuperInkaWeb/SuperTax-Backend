@@ -34,13 +34,15 @@ def parquet_key(company_id: int, dataset_id: int) -> str:
     return f"{_PREFIX}/{company_id}/{dataset_id}/data.parquet"
 
 
-def export_key(company_id: int, dataset_id: int, formato: str) -> str:
+def export_key(company_id: int, dataset_id: int, formato: str, sufijo: str = "filtrado") -> str:
     """Clave del resultado exportado para descarga directa desde R2.
 
-    Determinista por (dataset, formato): cada descarga sobrescribe la anterior, así
-    no se acumulan objetos (conviene además una regla de ciclo de vida en el bucket)."""
+    Determinista por (dataset, formato, sufijo): cada descarga sobrescribe la
+    anterior, así no se acumulan objetos (conviene además una regla de ciclo de
+    vida en el bucket). El sufijo separa los distintos exportables (filtrado,
+    columnas, corregido, sin_duplicados, reporte)."""
     ext = formato.lstrip(".").lower()
-    return f"{_PREFIX}/{company_id}/{dataset_id}/exports/filtrado.{ext}"
+    return f"{_PREFIX}/{company_id}/{dataset_id}/exports/{sufijo}.{ext}"
 
 
 def locator(key: str) -> str:

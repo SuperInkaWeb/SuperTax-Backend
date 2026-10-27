@@ -25,6 +25,7 @@ from src.modules.datafilter.api.schemas import (
     DedupeResponse,
     DedupeSaveRequest,
     DownloadFormat,
+    DownloadPresignResponse,
     PivotDownloadRequest,
     PivotRequest,
     PivotResponse,
@@ -36,6 +37,7 @@ from src.modules.datafilter.api.schemas import (
     StatsRequest,
 )
 from src.modules.datafilter.application import analysis, query
+from src.modules.datafilter.infrastructure import storage_access
 from src.modules.datafilter.infrastructure.analysis_dispatch import encolar_materializacion
 from src.modules.datafilter.infrastructure.duckdb_engine import QueryTimeout
 from src.modules.datafilter.infrastructure.models import DatasetOrigin
@@ -67,6 +69,16 @@ def _descarga(ruta: str, media_type: str, nombre: str) -> FileResponse:
         path=ruta, media_type=media_type, filename=nombre,
         background=BackgroundTask(os.remove, ruta),
     )
+
+
+# Segundos de validez de la URL firmada de descarga directa desde R2.
+_PRESIGN_EXPIRA = 2 * 3600
+
+
+def _presign_r2(key: str, media_type: str, nombre: str) -> DownloadPresignResponse:
+    """Firma una URL de descarga directa desde R2 para el export ya escrito."""
+    url = storage_access.firmar_descarga(key, nombre, media_type, _PRESIGN_EXPIRA)
+    return DownloadPresignResponse(mode="r2", url=url, filename=nombre)
 
 
 def _guardar(
@@ -337,3 +349,94 @@ def column_stats(
     except _ERRORES as exc:
         raise http_error(exc) from exc
     return ColumnStats(**perfil)
+
+
+# ── Descargas directas desde R2 (URL firmada) ─────────────────────────────
+# Mismo patrón que la descarga filtrada: escriben el resultado DIRECTO a R2 y
+# devuelven una URL firmada; en dev/local devuelven mode=single (descarga clásica).
+
+@router.post(
+    "/datasets/{dataset_id}/compute/download/presign", response_model=DownloadPresignResponse
+)
+def compute_download_presign(
+    dataset_id: int,
+    body: ComputeDownloadRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> DownloadPresignResponse:
+    if not storage_access.usa_s3():
+        return DownloadPresignResponse(mode="single")
+    try:
+        key, media, nombre = analysis.export_compute(
+            db, dataset_id, ctx.company.id,
+            filtro=body.filter, columnas=body.columns,
+            formato=body.format.value, delimiter_char=_delimiter_char(body), a_r2=True,
+        )
+    except _ERRORES as exc:
+        raise http_error(exc) from exc
+    return _presign_r2(key, media, nombre)
+
+
+@router.post(
+    "/datasets/{dataset_id}/replace/download/presign", response_model=DownloadPresignResponse
+)
+def replace_download_presign(
+    dataset_id: int,
+    body: ReplaceDownloadRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> DownloadPresignResponse:
+    if not storage_access.usa_s3():
+        return DownloadPresignResponse(mode="single")
+    try:
+        key, media, nombre = analysis.export_replace(
+            db, dataset_id, ctx.company.id,
+            filtro=body.filter, replacements=body.replacements,
+            formato=body.format.value, delimiter_char=_delimiter_char(body), a_r2=True,
+        )
+    except _ERRORES as exc:
+        raise http_error(exc) from exc
+    return _presign_r2(key, media, nombre)
+
+
+@router.post(
+    "/datasets/{dataset_id}/dedupe/download/presign", response_model=DownloadPresignResponse
+)
+def dedupe_download_presign(
+    dataset_id: int,
+    body: DedupeDownloadRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> DownloadPresignResponse:
+    if not storage_access.usa_s3():
+        return DownloadPresignResponse(mode="single")
+    try:
+        key, media, nombre = analysis.export_dedupe(
+            db, dataset_id, ctx.company.id,
+            filtro=body.filter, key_columns=body.key_columns,
+            formato=body.format.value, delimiter_char=_delimiter_char(body), a_r2=True,
+        )
+    except _ERRORES as exc:
+        raise http_error(exc) from exc
+    return _presign_r2(key, media, nombre)
+
+
+@router.post(
+    "/datasets/{dataset_id}/pivot/download/presign", response_model=DownloadPresignResponse
+)
+def pivot_download_presign(
+    dataset_id: int,
+    body: PivotDownloadRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.read")),
+    db: Session = Depends(get_db),
+) -> DownloadPresignResponse:
+    if not storage_access.usa_s3():
+        return DownloadPresignResponse(mode="single")
+    try:
+        key, media, nombre = analysis.export_pivot(
+            db, dataset_id, ctx.company.id,
+            spec=body, formato=body.format.value, delimiter_char=_delimiter_char(body), a_r2=True,
+        )
+    except _ERRORES as exc:
+        raise http_error(exc) from exc
+    return _presign_r2(key, media, nombre)
