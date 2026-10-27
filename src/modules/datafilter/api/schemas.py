@@ -1,6 +1,7 @@
 """DTOs del módulo DataFilter: datasets, filtrado, descarga y análisis."""
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +44,40 @@ class DatasetSummary(BaseModel):
             created_at=m.created_at,
             error=m.error,
         )
+
+
+# ── Subida directa a R2 (multipart) ──────────────────────────────────────
+class UploadInitRequest(BaseModel):
+    """Inicio de subida: el front declara nombre y tamaño para firmar las partes."""
+    filename: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(gt=0)
+
+
+class UploadPartUrl(BaseModel):
+    part_number: int
+    url: str
+
+
+class UploadInitResponse(BaseModel):
+    """`single` = subir por el backend (dev/local); `multipart` = directo a R2."""
+    mode: Literal["single", "multipart"]
+    dataset_id: int | None = None
+    part_size: int | None = None
+    parts: list[UploadPartUrl] = Field(default_factory=list)
+
+
+class UploadedPart(BaseModel):
+    part_number: int = Field(ge=1)
+    etag: str = Field(min_length=1)
+
+
+class UploadCompleteRequest(BaseModel):
+    dataset_id: int
+    parts: list[UploadedPart] = Field(min_length=1)
+
+
+class UploadAbortRequest(BaseModel):
+    dataset_id: int
 
 
 class FilterRequest(BaseModel):

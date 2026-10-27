@@ -90,3 +90,52 @@ def delete(key: str) -> None:
         ruta = locator(key)
         if os.path.exists(ruta):
             os.remove(ruta)
+
+
+# ── Subida directa a R2 (multipart con URLs firmadas) ──────────────────────
+# El navegador sube el archivo en partes DIRECTO a R2, sin pasar por el backend
+# (evita el límite/timeout del borde del hosting para archivos de varios GB). El
+# backend solo orquesta: crea la subida, firma las URLs de cada parte y la cierra.
+
+
+def crear_multipart(key: str) -> str:
+    """Inicia una subida multipart y devuelve su UploadId."""
+    resp = _s3_client().create_multipart_upload(Bucket=settings.S3_BUCKET, Key=key)
+    return resp["UploadId"]
+
+
+def firmar_parte(key: str, upload_id: str, part_number: int, expira_segundos: int) -> str:
+    """URL firmada (PUT) para subir una parte directo a R2. Expira pronto."""
+    return _s3_client().generate_presigned_url(
+        "upload_part",
+        Params={
+            "Bucket": settings.S3_BUCKET,
+            "Key": key,
+            "UploadId": upload_id,
+            "PartNumber": part_number,
+        },
+        ExpiresIn=expira_segundos,
+    )
+
+
+def completar_multipart(key: str, upload_id: str, partes: list[dict]) -> None:
+    """Ensambla las partes subidas. `partes`: [{'PartNumber': n, 'ETag': etag}]."""
+    _s3_client().complete_multipart_upload(
+        Bucket=settings.S3_BUCKET,
+        Key=key,
+        UploadId=upload_id,
+        MultipartUpload={"Parts": partes},
+    )
+
+
+def abortar_multipart(key: str, upload_id: str) -> None:
+    """Cancela una subida multipart y descarta sus partes (limpieza)."""
+    _s3_client().abort_multipart_upload(
+        Bucket=settings.S3_BUCKET, Key=key, UploadId=upload_id
+    )
+
+
+def tamano(key: str) -> int:
+    """Tamaño real del objeto en R2 (para validar el máximo tras completar)."""
+    head = _s3_client().head_object(Bucket=settings.S3_BUCKET, Key=key)
+    return head["ContentLength"]

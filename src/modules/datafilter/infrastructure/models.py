@@ -19,6 +19,7 @@ from src.platform.database.base import Base, utcnow
 
 
 class DatasetStatus(str, enum.Enum):
+    uploading = "uploading"    # subida directa a R2 en curso (multipart), aún sin archivo
     pending = "pending"        # subido, aún no procesado
     processing = "processing"  # convirtiéndose a Parquet
     ready = "ready"            # listo para filtrar/descargar
@@ -60,6 +61,8 @@ class DatasetModel(Base):
     # Rutas en storage: el Parquet listo y el archivo original subido.
     parquet_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     source_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # UploadId de la subida multipart en curso (directo a R2); null cuando no hay una.
+    multipart_upload_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

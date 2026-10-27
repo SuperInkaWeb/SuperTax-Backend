@@ -92,6 +92,53 @@ class SqlDatasetRepository:
             ds.source_path = source_path
             self.db.commit()
 
+    # ── Subida directa a R2 (multipart) ──────────────────────────────────
+
+    def create_uploading(
+        self, *, company_id: int, created_by_id: int, original_filename: str, extension: str
+    ) -> DatasetModel:
+        """Registra un dataset en estado `uploading`: la subida directa a R2 está en
+        curso y aún no hay archivo. Pasa a `pending` al completarse (ver `complete_upload`)."""
+        ds = DatasetModel(
+            company_id=company_id,
+            created_by_id=created_by_id,
+            original_filename=original_filename,
+            extension=extension,
+            status=DatasetStatus.uploading.value,
+            origin=DatasetOrigin.uploaded.value,
+            columns=[],
+            sheets=[],
+        )
+        self.db.add(ds)
+        self.db.commit()
+        self.db.refresh(ds)
+        return ds
+
+    def set_multipart(self, dataset_id: int, source_path: str, upload_id: str) -> None:
+        """Guarda la clave en R2 y el UploadId de la subida multipart en curso."""
+        ds = self.db.get(DatasetModel, dataset_id)
+        if ds is not None:
+            ds.source_path = source_path
+            ds.multipart_upload_id = upload_id
+            self.db.commit()
+
+    def complete_upload(
+        self, dataset_id: int, company_id: int, size_bytes: int
+    ) -> DatasetModel | None:
+        """Cierra la subida: pasa de `uploading` a `pending` y fija el tamaño real.
+
+        Devuelve el dataset o None si no existe o no estaba subiéndose (evita cerrar
+        dos veces). Limpia el UploadId porque la subida ya terminó."""
+        ds = self.get(dataset_id, company_id)
+        if ds is None or ds.status != DatasetStatus.uploading.value:
+            return None
+        ds.size_bytes = size_bytes
+        ds.status = DatasetStatus.pending.value
+        ds.multipart_upload_id = None
+        self.db.commit()
+        self.db.refresh(ds)
+        return ds
+
     def request_sheet_change(
         self, dataset_id: int, company_id: int, sheet: str
     ) -> DatasetModel | None:

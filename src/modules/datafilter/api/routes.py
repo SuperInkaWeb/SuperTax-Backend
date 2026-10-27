@@ -5,9 +5,10 @@ Fase 2 (ingesta): subir un archivo (CSV/TXT/Excel) → se convierte a Parquet en
 subproceso efímero → queda listo para filtrar/descargar. Listar y consultar estado.
 El filtrado y la descarga llegan en la Fase 3.
 """
+import math
 import os
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
@@ -21,11 +22,17 @@ from src.modules.datafilter.api.schemas import (
     PreviewRequest,
     PreviewResponse,
     SheetSelection,
+    UploadAbortRequest,
+    UploadCompleteRequest,
+    UploadInitRequest,
+    UploadInitResponse,
+    UploadPartUrl,
 )
 from src.modules.datafilter.application import query
 from src.modules.datafilter.infrastructure import storage_access
 from src.modules.datafilter.infrastructure.duckdb_engine import QueryTimeout
 from src.modules.datafilter.infrastructure.ingest_dispatch import encolar_ingesta
+from src.modules.datafilter.infrastructure.models import DatasetStatus
 from src.modules.datafilter.infrastructure.query_builder import InvalidFilterError
 from src.modules.datafilter.infrastructure.repositories import SqlDatasetRepository
 from src.platform.authorization.deps import require_module, require_permission
@@ -39,6 +46,8 @@ router = APIRouter(tags=["datafilter"], dependencies=[Depends(require_module("da
 
 _EXTENSIONES_OK = {".csv", ".txt", ".xlsx", ".xls"}
 _CHUNK = 1024 * 1024  # 1 MiB por lectura (subida en streaming, sin cargar todo en RAM)
+_PART_SIZE = 100 * 1024 * 1024  # 100 MiB por parte en la subida directa a R2 (multipart)
+_PRESIGN_EXPIRA = 2 * 3600  # 2 h: margen para subir muchas partes con conexión lenta
 
 
 @router.get("/datasets", response_model=list[DatasetSummary])
@@ -119,6 +128,130 @@ async def subir_dataset(
     repo.set_uploaded(ds.id, tamano, key)
     encolar_ingesta(ds.id)
     return DatasetSummary.from_model(ds)
+
+
+# ── Subida directa a R2 (multipart con URLs firmadas) ──────────────────────
+# Evita el límite/timeout del borde del hosting para archivos de varios GB: el
+# navegador sube las partes DIRECTO a R2 y el backend solo orquesta.
+
+
+@router.post("/datasets/upload/init", response_model=UploadInitResponse)
+def iniciar_subida(
+    payload: UploadInitRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.create")),
+    db: Session = Depends(get_db),
+) -> UploadInitResponse:
+    """Inicia la subida directa a R2 en partes. En dev/local (storage no-S3) devuelve
+    `mode=single` para que el front use el flujo clásico por el backend."""
+    extension = os.path.splitext(payload.filename)[1].lower()
+    if extension not in _EXTENSIONES_OK:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Formato no soportado. Sube un archivo CSV, TXT o Excel (.xlsx/.xls).",
+        )
+    max_bytes = settings.DATAFILTER_MAX_UPLOAD_MB * 1024 * 1024
+    if payload.size_bytes > max_bytes:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"El archivo supera el máximo de {settings.DATAFILTER_MAX_UPLOAD_MB} MB.",
+        )
+    if not storage_access.usa_s3():
+        return UploadInitResponse(mode="single")
+
+    repo = SqlDatasetRepository(db)
+    ds = repo.create_uploading(
+        company_id=ctx.company.id,
+        created_by_id=ctx.user.id,
+        original_filename=payload.filename,
+        extension=extension,
+    )
+    key = storage_access.source_key(ctx.company.id, ds.id, extension)
+    upload_id = storage_access.crear_multipart(key)
+    repo.set_multipart(ds.id, key, upload_id)
+
+    total_partes = max(1, math.ceil(payload.size_bytes / _PART_SIZE))
+    partes = [
+        UploadPartUrl(
+            part_number=n,
+            url=storage_access.firmar_parte(key, upload_id, n, _PRESIGN_EXPIRA),
+        )
+        for n in range(1, total_partes + 1)
+    ]
+    return UploadInitResponse(
+        mode="multipart", dataset_id=ds.id, part_size=_PART_SIZE, parts=partes
+    )
+
+
+@router.post(
+    "/datasets/upload/complete",
+    response_model=DatasetSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+def completar_subida(
+    payload: UploadCompleteRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.create")),
+    db: Session = Depends(get_db),
+) -> DatasetSummary:
+    """Ensambla las partes en R2, valida el tamaño real y encola la ingesta."""
+    repo = SqlDatasetRepository(db)
+    ds = repo.get(payload.dataset_id, ctx.company.id)
+    if (
+        ds is None
+        or ds.status != DatasetStatus.uploading.value
+        or not ds.source_path
+        or not ds.multipart_upload_id
+    ):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="Subida no encontrada o ya finalizada"
+        )
+
+    partes = [
+        {"PartNumber": p.part_number, "ETag": p.etag}
+        for p in sorted(payload.parts, key=lambda parte: parte.part_number)
+    ]
+    try:
+        storage_access.completar_multipart(ds.source_path, ds.multipart_upload_id, partes)
+    except Exception as exc:  # noqa: BLE001 — cualquier fallo de R2 se traduce a 400
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="No se pudo completar la subida"
+        ) from exc
+
+    tamano = storage_access.tamano(ds.source_path)
+    max_bytes = settings.DATAFILTER_MAX_UPLOAD_MB * 1024 * 1024
+    if tamano > max_bytes:
+        storage_access.delete(ds.source_path)
+        repo.delete(ds.id, ctx.company.id)
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"El archivo supera el máximo de {settings.DATAFILTER_MAX_UPLOAD_MB} MB.",
+        )
+
+    listo = repo.complete_upload(ds.id, ctx.company.id, tamano)
+    if listo is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="Subida no encontrada o ya finalizada"
+        )
+    encolar_ingesta(listo.id)
+    return DatasetSummary.from_model(listo)
+
+
+@router.post("/datasets/upload/abort", status_code=status.HTTP_204_NO_CONTENT)
+def abortar_subida(
+    payload: UploadAbortRequest,
+    ctx: ActiveContext = Depends(require_permission("datafilter.dataset.create")),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Cancela una subida directa en curso y limpia el dataset provisional."""
+    repo = SqlDatasetRepository(db)
+    ds = repo.get(payload.dataset_id, ctx.company.id)
+    if ds is not None and ds.status == DatasetStatus.uploading.value:
+        if ds.source_path and ds.multipart_upload_id:
+            try:
+                storage_access.abortar_multipart(ds.source_path, ds.multipart_upload_id)
+            except Exception:  # noqa: BLE001 — limpieza best-effort
+                pass
+        repo.delete(ds.id, ctx.company.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
