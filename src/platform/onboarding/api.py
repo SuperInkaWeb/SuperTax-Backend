@@ -59,17 +59,29 @@ class AccessRequestResponse(BaseModel):
     rejection_reason: str | None = None
 
 
-@router.post("", response_model=AccessRequestResponse, status_code=status.HTTP_201_CREATED)
+class SolicitudPublicaResponse(BaseModel):
+    # tipo: "estudio_nuevo" (RUC libre → SuperAdmin) | "acceso_empresa" (RUC existe
+    # → admin dueño). El frontend muestra el mensaje adecuado según el tipo.
+    tipo: str
+    email: str
+    ruc: str
+    detalle: str
+
+
+@router.post("", response_model=SolicitudPublicaResponse, status_code=status.HTTP_201_CREATED)
 def create_access_request(
     payload: AccessRequestInput, request: Request, db: Session = Depends(get_db)
-) -> AccessRequestResponse:
-    """Solicitud pública: un prospecto pide acceso a la plataforma."""
+) -> SolicitudPublicaResponse:
+    """Solicitud pública. Si el RUC es libre, pide alta de estudio (la revisa el
+    SuperAdmin); si ya existe, pide acceso al admin dueño de ese estudio."""
     _chequear_limite_solicitud(request)
     try:
-        req = service.create_request(db, payload.model_dump())
+        tipo, detalle = service.create_request(db, payload.model_dump())
     except service.OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
-    return AccessRequestResponse.model_validate(req)
+    return SolicitudPublicaResponse(
+        tipo=tipo, email=payload.email, ruc=payload.ruc, detalle=detalle
+    )
 
 
 @router.get("", response_model=list[AccessRequestResponse])

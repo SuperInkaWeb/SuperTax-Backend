@@ -15,7 +15,13 @@ from src.platform.authorization.models import Role
 from src.platform.database.base import utcnow
 from src.platform.identity import auth0
 from src.platform.onboarding.models import AccessRequest, AccessRequestStatus
-from src.platform.tenancy.models import Company, Estudio, EstudioMember
+from src.platform.tenancy.models import (
+    Company,
+    CompanyAccessRequest,
+    CompanyAccessRequestStatus,
+    Estudio,
+    EstudioMember,
+)
 from src.platform.users.models import User, UserStatus
 
 ADMIN_ROLE_KEY = "admin_empresa"
@@ -25,7 +31,37 @@ class OnboardingError(Exception):
     """Error de negocio del onboarding (se traduce a 4xx en la API)."""
 
 
-def create_request(db: Session, data: dict) -> AccessRequest:
+def create_request(db: Session, data: dict) -> tuple[str, str]:
+    """Crea la solicitud pública adecuada según el RUC y devuelve (tipo, detalle):
+
+    - RUC libre → onboarding de estudio nuevo (lo aprueba el SuperAdmin).
+    - RUC ya registrado → solicitud de acceso al admin del estudio dueño; la cuenta
+      se provisiona recién al aprobar (no hay registro libre a un RUC ajeno).
+    """
+    company = db.scalar(select(Company).where(Company.ruc == data["ruc"]))
+    if company is not None:
+        pendiente = db.scalar(
+            select(CompanyAccessRequest).where(
+                CompanyAccessRequest.requester_email == data["email"],
+                CompanyAccessRequest.company_id == company.id,
+                CompanyAccessRequest.status == CompanyAccessRequestStatus.pendiente,
+            )
+        )
+        if pendiente is not None:
+            raise OnboardingError(
+                "Ya hay una solicitud pendiente para esa empresa con ese correo"
+            )
+        db.add(
+            CompanyAccessRequest(
+                company_id=company.id,
+                requester_email=data["email"],
+                requester_nombre=data["nombre"],
+                mensaje=data.get("mensaje"),
+            )
+        )
+        db.commit()
+        return ("acceso_empresa", company.razon_social)
+
     pendiente = db.scalar(
         select(AccessRequest).where(
             AccessRequest.email == data["email"],
@@ -34,11 +70,9 @@ def create_request(db: Session, data: dict) -> AccessRequest:
     )
     if pendiente is not None:
         raise OnboardingError("Ya existe una solicitud pendiente con ese email")
-    request = AccessRequest(**data)
-    db.add(request)
+    db.add(AccessRequest(**data))
     db.commit()
-    db.refresh(request)
-    return request
+    return ("estudio_nuevo", data["empresa_nombre"])
 
 
 def list_requests(

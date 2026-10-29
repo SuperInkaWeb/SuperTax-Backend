@@ -112,9 +112,14 @@ class CompanyAccessRequest(Base):
     __table_args__ = {"schema": "core"}
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    requester_user_id: Mapped[int] = mapped_column(
-        ForeignKey("core.users.id", ondelete="CASCADE"), index=True
+    # Nulo si la solicitud es PÚBLICA (la persona aún no tiene cuenta); al aprobar
+    # se provisiona el usuario y se rellena. Si viene de alguien ya registrado, va
+    # poblado y requester_email/nombre quedan en null.
+    requester_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("core.users.id", ondelete="CASCADE"), index=True, nullable=True
     )
+    requester_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    requester_nombre: Mapped[str | None] = mapped_column(String(150), nullable=True)
     company_id: Mapped[int] = mapped_column(
         ForeignKey("core.companies.id", ondelete="CASCADE"), index=True
     )

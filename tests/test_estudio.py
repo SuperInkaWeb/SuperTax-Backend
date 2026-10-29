@@ -15,6 +15,7 @@ from src.platform.tenancy.models import (
     CompanyAccessRequest,
     Estudio,
     EstudioMember,
+    Membership,
 )
 from src.platform.users.models import User
 from src.seed import seed
@@ -150,6 +151,74 @@ def test_solicitar_acceso_a_ruc_inexistente_da_404(db_session):
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 404
+
+
+def test_solicitud_publica_ruc_existente_va_al_admin_dueno(db_session, monkeypatch):
+    _mock_auth0(monkeypatch)
+    owner, _estudio, c1, _c2 = _estudio_con_admin(db_session)
+
+    app.dependency_overrides[get_db] = lambda: db_session
+    try:
+        # Público (sin cuenta): solicita con un RUC que YA existe.
+        resp = TestClient(app).post(
+            "/api/access-requests",
+            json={
+                "nombre": "Externo Pub",
+                "email": "pub@e.pe",
+                "empresa_nombre": "lo que sea",
+                "ruc": "20111111111",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["tipo"] == "acceso_empresa"
+    finally:
+        app.dependency_overrides.clear()
+
+    sol = db_session.scalar(
+        select(CompanyAccessRequest).where(CompanyAccessRequest.requester_email == "pub@e.pe")
+    )
+    assert sol is not None and sol.requester_user_id is None and sol.company_id == c1.id
+
+    # El admin dueño la ve y la aprueba → se provisiona el usuario + membresía.
+    _override(db_session, owner)
+    try:
+        client = TestClient(app)
+        inbox = client.get("/api/company-access-requests").json()
+        req_id = next(s["id"] for s in inbox if s["requester_email"] == "pub@e.pe")
+        rev = client.put(
+            f"/api/company-access-requests/{req_id}/review",
+            json={"status": "aprobado", "role_key": "operador"},
+        )
+        assert rev.status_code == 200, rev.text
+    finally:
+        app.dependency_overrides.clear()
+
+    nuevo = db_session.scalar(select(User).where(User.email == "pub@e.pe"))
+    assert nuevo is not None and nuevo.auth0_sub == "auth0|pub@e.pe"
+    assert db_session.scalar(
+        select(Membership).where(
+            Membership.user_id == nuevo.id, Membership.company_id == c1.id
+        )
+    ) is not None
+
+
+def test_solicitud_publica_ruc_libre_es_estudio_nuevo(db_session):
+    _estudio_con_admin(db_session)  # deja el seed listo
+    app.dependency_overrides[get_db] = lambda: db_session
+    try:
+        resp = TestClient(app).post(
+            "/api/access-requests",
+            json={
+                "nombre": "Nuevo Estudio",
+                "email": "ne@e.pe",
+                "empresa_nombre": "Primera SAC",
+                "ruc": "20999999999",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 201
+    assert resp.json()["tipo"] == "estudio_nuevo"
 
 
 def test_revisar_solicitud_solo_el_admin_dueno(db_session):

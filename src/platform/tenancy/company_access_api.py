@@ -6,6 +6,8 @@ al admin del estudio dueño → el admin la aprueba concediéndole una membresí
 el rol que elija (operador/asistente/consulta), o la rechaza. Reemplaza el muro
 del 409 "ya registrado" por una vía de acceso controlada por el dueño.
 """
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -14,6 +16,7 @@ from sqlalchemy.orm import Session
 from src.platform.authorization.models import Role, RoleScope
 from src.platform.database.base import utcnow
 from src.platform.database.session import get_db
+from src.platform.identity import auth0
 from src.platform.identity.current_user import get_current_user
 from src.platform.tenancy.models import (
     Company,
@@ -30,9 +33,28 @@ from src.platform.tenancy.service import (
     estudio_admin_role_id,
     get_active_membership,
 )
-from src.platform.users.models import User
+from src.platform.users.models import User, UserStatus
 
 router = APIRouter(prefix="/api/company-access-requests", tags=["company-access"])
+
+
+def _provisionar_usuario(db: Session, email: str, nombre: str) -> User:
+    """Usuario para un solicitante PÚBLICO: reutiliza si el email ya existe, o lo
+    crea en Auth0 (que envía el correo para fijar contraseña) y en la BD local."""
+    existente = db.scalar(select(User).where(User.email == email))
+    if existente is not None:
+        return existente
+    try:
+        auth0_sub = auth0.crear_usuario(email, nombre, secrets.token_urlsafe(12) + "A1!")
+        auth0.enviar_reset_password(email)
+    except auth0.Auth0Error as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    usuario = User(
+        email=email, nombre=nombre, auth0_sub=auth0_sub, status=UserStatus.activo
+    )
+    db.add(usuario)
+    db.flush()
+    return usuario
 
 
 class AccessRequestInput(BaseModel):
@@ -123,7 +145,7 @@ def list_pendientes(
     filas = db.execute(
         select(CompanyAccessRequest, Company, User)
         .join(Company, Company.id == CompanyAccessRequest.company_id)
-        .join(User, User.id == CompanyAccessRequest.requester_user_id)
+        .outerjoin(User, User.id == CompanyAccessRequest.requester_user_id)
         .where(
             Company.estudio_id.in_(estudios),
             CompanyAccessRequest.status == CompanyAccessRequestStatus.pendiente,
@@ -133,7 +155,9 @@ def list_pendientes(
     return [
         AccessRequestItem(
             id=s.id, ruc=c.ruc, razon_social=c.razon_social,
-            requester_email=u.email, requester_nombre=u.nombre,
+            # Público (sin cuenta aún): usa los datos guardados en la solicitud.
+            requester_email=u.email if u else (s.requester_email or ""),
+            requester_nombre=u.nombre if u else (s.requester_nombre or ""),
             mensaje=s.mensaje, status=s.status,
         )
         for s, c, u in filas
@@ -160,7 +184,11 @@ def revisar(
             status.HTTP_403_FORBIDDEN, detail="No administras el estudio dueño de esa empresa"
         )
 
-    requester = db.get(User, solicitud.requester_user_id)
+    requester = (
+        db.get(User, solicitud.requester_user_id)
+        if solicitud.requester_user_id is not None
+        else None
+    )
     if payload.status == CompanyAccessRequestStatus.aprobado:
         if not payload.role_key:
             raise HTTPException(
@@ -174,6 +202,14 @@ def revisar(
         role = db.scalar(select(Role).where(Role.key == payload.role_key))
         if role is None or role.scope != RoleScope.company:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Rol inválido")
+        # Solicitud pública: recién al aprobar se provisiona la cuenta.
+        if requester is None:
+            requester = _provisionar_usuario(
+                db,
+                solicitud.requester_email,
+                solicitud.requester_nombre or solicitud.requester_email,
+            )
+            solicitud.requester_user_id = requester.id
         ya = db.scalar(
             select(Membership).where(
                 Membership.user_id == requester.id,
@@ -202,6 +238,7 @@ def revisar(
     db.commit()
     return AccessRequestItem(
         id=solicitud.id, ruc=company.ruc, razon_social=company.razon_social,
-        requester_email=requester.email, requester_nombre=requester.nombre,
+        requester_email=requester.email if requester else (solicitud.requester_email or ""),
+        requester_nombre=requester.nombre if requester else (solicitud.requester_nombre or ""),
         mensaje=solicitud.mensaje, status=solicitud.status,
     )
