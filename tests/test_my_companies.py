@@ -5,7 +5,7 @@ from sqlalchemy import select
 from src.main import app
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
-from src.platform.tenancy.models import Company, Membership
+from src.platform.tenancy.models import Company, Estudio, Membership
 from src.platform.users.models import User
 from src.seed import seed
 
@@ -44,6 +44,33 @@ def test_crear_mi_empresa_me_hace_admin(db_session):
         )
     )
     assert membresia is not None
+
+    # La empresa queda colgada del estudio propio del usuario (del que es dueño).
+    estudio = db_session.scalar(
+        select(Estudio).where(Estudio.owner_user_id == user.id)
+    )
+    assert estudio is not None
+    assert company.estudio_id == estudio.id
+
+
+def test_crear_dos_empresas_reusa_el_mismo_estudio(db_session):
+    user = _user(db_session)
+    _override(db_session, user)
+    try:
+        cliente = TestClient(app)
+        cliente.post("/api/my-companies", json={"ruc": "20555666777", "razon_social": "Uno"})
+        cliente.post("/api/my-companies", json={"ruc": "20555666888", "razon_social": "Dos"})
+    finally:
+        app.dependency_overrides.clear()
+
+    estudios = db_session.scalars(
+        select(Estudio).where(Estudio.owner_user_id == user.id)
+    ).all()
+    assert len(estudios) == 1
+    companies = db_session.scalars(
+        select(Company).where(Company.estudio_id == estudios[0].id)
+    ).all()
+    assert {c.ruc for c in companies} == {"20555666777", "20555666888"}
 
 
 def test_crear_mi_empresa_ruc_duplicado_da_409(db_session):

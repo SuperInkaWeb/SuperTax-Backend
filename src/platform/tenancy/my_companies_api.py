@@ -13,12 +13,22 @@ from sqlalchemy.orm import Session
 from src.platform.authorization.models import Role
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
-from src.platform.tenancy.models import Company, Membership
+from src.platform.tenancy.models import Company, Estudio, Membership
 from src.platform.users.models import User
 
 router = APIRouter(prefix="/api/my-companies", tags=["my-companies"])
 
 _ADMIN_ROLE_KEY = "admin_empresa"
+
+
+def _estudio_del_usuario(db: Session, user: User) -> Estudio:
+    """Estudio propio del usuario (del que es dueño); lo crea si aún no tiene."""
+    estudio = db.scalar(select(Estudio).where(Estudio.owner_user_id == user.id))
+    if estudio is None:
+        estudio = Estudio(nombre=f"Estudio {user.nombre}", owner_user_id=user.id)
+        db.add(estudio)
+        db.flush()
+    return estudio
 
 
 class MyCompanyInput(BaseModel):
@@ -56,7 +66,10 @@ def create_my_company(
             detail="Falta el rol base 'admin_empresa' (ejecuta el seed)",
         )
 
-    company = Company(ruc=payload.ruc, razon_social=payload.razon_social)
+    estudio = _estudio_del_usuario(db, user)
+    company = Company(
+        ruc=payload.ruc, razon_social=payload.razon_social, estudio_id=estudio.id
+    )
     db.add(company)
     db.flush()
     db.add(Membership(user_id=user.id, company_id=company.id, role_id=admin_role.id))

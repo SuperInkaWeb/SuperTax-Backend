@@ -49,7 +49,7 @@ def db_session():
         text(
             "TRUNCATE core.role_permissions, core.memberships, core.company_modules, "
             "core.access_requests, core.company_credentials, "
-            "core.users, core.companies, core.roles, "
+            "core.users, core.companies, core.estudios, core.roles, "
             "core.permissions, core.modules, "
             "sire.company_credentials, sire.company_file_mappings, "
             "sire.report_files, sire.reconciliation_results, "
