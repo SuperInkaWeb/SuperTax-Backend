@@ -2,6 +2,8 @@
 Tests del núcleo Core: RBAC (permisos por rol), entitlements de módulos y
 resolución de membresía (Modelo B). Usan Postgres real (aislados por rollback).
 """
+from sqlalchemy import select
+
 from src.platform.authorization.entitlements import company_has_module
 from src.platform.authorization.models import (
     CompanyModule,
@@ -10,9 +12,15 @@ from src.platform.authorization.models import (
     Role,
 )
 from src.platform.authorization.permissions import role_has_permission
-from src.platform.tenancy.models import Company, Membership
-from src.platform.tenancy.service import get_active_membership
+from src.platform.tenancy.models import (
+    Company,
+    Estudio,
+    EstudioMember,
+    Membership,
+)
+from src.platform.tenancy.service import estudio_admin_role_id, get_active_membership
 from src.platform.users.models import User
+from src.seed import seed
 
 
 def _crear_empresa(db) -> Company:
@@ -80,3 +88,53 @@ def test_get_active_membership(db_session):
 
     # Un usuario que no pertenece a la empresa no obtiene membresía
     assert get_active_membership(db_session, user_id=999, company_id=company.id) is None
+
+
+def _estudio_con_miembro(db, role_key: str) -> tuple[Estudio, User]:
+    role = Role(key=role_key, nombre=role_key)
+    user = User(email=f"{role_key}@e.pe", nombre=role_key, auth0_sub=f"auth0|{role_key}")
+    db.add_all([role, user])
+    db.flush()
+    estudio = Estudio(nombre="Estudio", owner_user_id=user.id)
+    db.add(estudio)
+    db.flush()
+    db.add(EstudioMember(estudio_id=estudio.id, user_id=user.id, role_id=role.id))
+    db.flush()
+    return estudio, user
+
+
+def test_estudio_admin_role_id_concede_al_admin(db_session):
+    estudio, user = _estudio_con_miembro(db_session, "admin_empresa")
+    role_id = estudio_admin_role_id(db_session, user.id, estudio.id)
+    assert role_id is not None
+    # Sin estudio o usuario ajeno → sin acceso total
+    assert estudio_admin_role_id(db_session, user.id, None) is None
+    assert estudio_admin_role_id(db_session, user_id=999, estudio_id=estudio.id) is None
+
+
+def test_estudio_miembro_no_admin_no_da_acceso_total(db_session):
+    # Un operador de estudio NO ve toda la cartera (eso se asigna por cliente).
+    estudio, user = _estudio_con_miembro(db_session, "operador")
+    assert estudio_admin_role_id(db_session, user.id, estudio.id) is None
+
+
+def test_seed_define_los_cuatro_roles(db_session):
+    seed(db_session)
+
+    def permisos(key: str) -> set[str]:
+        role = db_session.scalar(select(Role).where(Role.key == key))
+        return {p.key for p in role.permissions}
+
+    operador = permisos("operador")
+    asistente = permisos("asistente")
+    consulta = permisos("consulta")
+
+    # Operador (Contador): opera todo el módulo, incluido borrar y credenciales.
+    assert {"datafilter.dataset.delete", "sire.credentials.manage", "sire.job.approve"} <= operador
+    # Asistente: día a día SIN borrar ni gestionar credenciales.
+    assert {"sire.job.create", "sire.job.approve"} <= asistente
+    assert "datafilter.dataset.delete" not in asistente
+    assert "sire.credentials.manage" not in asistente
+    # Consulta: solo lectura.
+    assert "sire.job.read" in consulta
+    assert all(key.endswith(".read") for key in consulta)

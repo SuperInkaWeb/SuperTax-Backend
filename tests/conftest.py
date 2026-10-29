@@ -47,7 +47,8 @@ def db_session():
     # El TRUNCATE va en la transacción externa; el rollback final lo revierte.
     connection.execute(
         text(
-            "TRUNCATE core.role_permissions, core.memberships, core.company_modules, "
+            "TRUNCATE core.role_permissions, core.memberships, core.estudio_members, "
+            "core.company_modules, "
             "core.access_requests, core.company_credentials, "
             "core.users, core.companies, core.estudios, core.roles, "
             "core.permissions, core.modules, "

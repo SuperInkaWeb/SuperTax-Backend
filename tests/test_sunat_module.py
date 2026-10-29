@@ -107,8 +107,8 @@ def test_listar_jobs_vacio(db_session):
 
 
 def test_credenciales_requiere_permiso_manage(db_session):
-    # 'operador' no tiene sunat.credentials.manage → 403.
-    user, empresa = _escenario(db_session, role_key="operador")
+    # 'asistente' no tiene sunat.credentials.manage → 403.
+    user, empresa = _escenario(db_session, role_key="asistente")
     _override(db_session, user)
     try:
         resp = TestClient(app).get(

@@ -21,6 +21,7 @@ BASE_ROLES = {
     "admin_empresa": "Admin Empresa",
     "supervisor": "Supervisor",
     "operador": "Operador",
+    "asistente": "Asistente",
     "consulta": "Consulta",
 }
 
@@ -29,13 +30,22 @@ CORE_COMPANY_PERMISSIONS = ("company.member.manage", "company.manage")
 
 
 def _rol_recibe(role_key: str, permission_key: str) -> bool:
-    """Política por defecto de asignación permiso→rol."""
+    """Política por defecto de asignación permiso→rol (permisos de módulo).
+
+    - admin/supervisor/operador: operan todo el módulo.
+    - asistente: trabajo del día a día, SIN borrar ni gestionar credenciales.
+    - consulta: solo lectura.
+    """
+    accion = permission_key.rsplit(".", 1)[-1]
     if role_key in ("admin_empresa", "supervisor"):
         return True
     if role_key == "operador":
-        return permission_key.endswith((".read", ".create", ".update"))
+        # Opera todo el módulo (incluye borrar y credenciales), salvo auditoría.
+        return accion in ("read", "create", "update", "delete", "approve", "manage")
+    if role_key == "asistente":
+        return accion in ("read", "create", "update", "approve")
     if role_key == "consulta":
-        return permission_key.endswith(".read")
+        return accion == "read"
     return False
 
 

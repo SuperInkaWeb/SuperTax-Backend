@@ -99,8 +99,8 @@ def test_formato_guardado_get_y_delete(db_session):
 
 
 def test_formato_guardar_requiere_permiso_manage(db_session):
-    # 'operador' no tiene sire.mapping.manage → DELETE debe dar 403.
-    user, empresa = _escenario(db_session, role_key="operador")
+    # 'asistente' no tiene sire.mapping.manage → DELETE debe dar 403.
+    user, empresa = _escenario(db_session, role_key="asistente")
     _override(db_session, user)
     try:
         resp = TestClient(app).delete(

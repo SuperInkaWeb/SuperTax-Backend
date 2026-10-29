@@ -36,6 +36,40 @@ class Estudio(Base):
     )
 
 
+class EstudioMemberStatus(str, enum.Enum):
+    activo = "activo"
+    inactivo = "inactivo"
+
+
+class EstudioMember(Base):
+    """Miembro del equipo de un estudio, con un rol a nivel estudio.
+
+    Un usuario puede pertenecer a varios estudios (contador en varios estudios).
+    El rol `admin_empresa` aquí = admin del estudio: ve y opera TODAS sus empresas.
+    Los roles no-admin se restringen a clientes concretos vía `memberships`.
+    """
+
+    __tablename__ = "estudio_members"
+    __table_args__ = (
+        UniqueConstraint("estudio_id", "user_id", name="uq_estudio_member"),
+        {"schema": "core"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    estudio_id: Mapped[int] = mapped_column(
+        ForeignKey("core.estudios.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("core.users.id", ondelete="CASCADE"), index=True
+    )
+    role_id: Mapped[int] = mapped_column(ForeignKey("core.roles.id"), index=True)
+    status: Mapped[EstudioMemberStatus] = mapped_column(
+        Enum(EstudioMemberStatus, name="estudio_member_status"),
+        default=EstudioMemberStatus.activo,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class CompanyStatus(str, enum.Enum):
     activo = "activo"
     inactivo = "inactivo"

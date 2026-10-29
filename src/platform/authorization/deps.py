@@ -53,7 +53,7 @@ def require_permission(permission_key: str) -> Callable[..., ActiveContext]:
         ctx: ActiveContext = Depends(get_active_context),
         db: Session = Depends(get_db),
     ) -> ActiveContext:
-        if not role_has_permission(db, ctx.membership.role_id, permission_key):
+        if not role_has_permission(db, ctx.role_id, permission_key):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 detail=f"No tiene el permiso '{permission_key}'",

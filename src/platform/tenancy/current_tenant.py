@@ -1,9 +1,10 @@
 """
 Dependencia de FastAPI: resuelve la EMPRESA ACTIVA del request y valida que el
-usuario sea miembro de ella (defensa #1 contra fuga entre tenants).
+usuario pueda acceder a ella (defensa #1 contra fuga entre tenants).
 
-La empresa activa se indica con la cabecera `X-Company-Id`. Sin membresía
-válida → 403, sin importar lo que el cliente envíe.
+La empresa activa se indica con la cabecera `X-Company-Id`. El acceso se concede
+por membresía directa en la empresa O por ser admin del estudio dueño (acceso
+total a su cartera). Sin ninguna de las dos → 403.
 """
 from dataclasses import dataclass
 
@@ -12,18 +13,18 @@ from sqlalchemy.orm import Session
 
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
-from src.platform.tenancy.models import Company, Membership
-from src.platform.tenancy.service import get_active_membership
+from src.platform.tenancy.models import Company
+from src.platform.tenancy.service import estudio_admin_role_id, get_active_membership
 from src.platform.users.models import User
 
 
 @dataclass
 class ActiveContext:
-    """Contexto resuelto de un request: usuario + empresa activa + su membresía."""
+    """Contexto resuelto de un request: usuario + empresa activa + rol efectivo."""
 
     user: User
     company: Company
-    membership: Membership
+    role_id: int
 
 
 def get_active_context(
@@ -36,14 +37,19 @@ def get_active_context(
             status.HTTP_400_BAD_REQUEST, detail="Falta la cabecera X-Company-Id"
         )
 
-    membership = get_active_membership(db, user.id, x_company_id)
-    if membership is None:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, detail="No pertenece a la empresa indicada"
-        )
-
     company = db.get(Company, x_company_id)
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
 
-    return ActiveContext(user=user, company=company, membership=membership)
+    membership = get_active_membership(db, user.id, x_company_id)
+    if membership is not None:
+        role_id = membership.role_id
+    else:
+        # Sin membresía directa: solo accede si es admin del estudio dueño.
+        role_id = estudio_admin_role_id(db, user.id, company.estudio_id)
+        if role_id is None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, detail="No pertenece a la empresa indicada"
+            )
+
+    return ActiveContext(user=user, company=company, role_id=role_id)
