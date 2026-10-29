@@ -24,7 +24,14 @@ from src.platform.authorization.permissions import role_has_permission
 from src.platform.database.session import get_db
 from src.platform.identity import auth0
 from src.platform.identity.current_user import get_current_user
-from src.platform.tenancy.models import Company, Membership, MembershipStatus
+from src.platform.tenancy.models import (
+    Company,
+    EstudioMember,
+    EstudioMemberStatus,
+    Membership,
+    MembershipStatus,
+)
+from src.platform.tenancy.service import ADMIN_ROLE_KEY
 from src.platform.users.models import User, UserStatus
 
 router = APIRouter(prefix="/api/team", tags=["team"])
@@ -33,14 +40,37 @@ _MANAGE = "company.member.manage"
 
 
 def _empresas_administradas(db: Session, user: User) -> set[int]:
-    """IDs de empresas donde el usuario tiene membresía ACTIVA con permiso de gestión."""
+    """IDs de empresas que el usuario administra: toda la cartera de los estudios
+    donde es admin, más (compat) las empresas con membresía directa que le da
+    gestión de miembros."""
+    ids: set[int] = set()
+
+    # 1) Admin de estudio → todas las empresas de esos estudios.
+    estudios_admin = db.scalars(
+        select(EstudioMember.estudio_id)
+        .join(Role, Role.id == EstudioMember.role_id)
+        .where(
+            EstudioMember.user_id == user.id,
+            EstudioMember.status == EstudioMemberStatus.activo,
+            Role.key == ADMIN_ROLE_KEY,
+        )
+    ).all()
+    if estudios_admin:
+        ids.update(
+            db.scalars(
+                select(Company.id).where(Company.estudio_id.in_(estudios_admin))
+            ).all()
+        )
+
+    # 2) Compat: empresas con membresía directa que otorga gestión de miembros.
     memberships = db.scalars(
         select(Membership).where(
             Membership.user_id == user.id,
             Membership.status == MembershipStatus.activo,
         )
     ).all()
-    return {m.company_id for m in memberships if role_has_permission(db, m.role_id, _MANAGE)}
+    ids.update(m.company_id for m in memberships if role_has_permission(db, m.role_id, _MANAGE))
+    return ids
 
 
 def _rol_de_empresa(db: Session, role_key: str) -> Role:
