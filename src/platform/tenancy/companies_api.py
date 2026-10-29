@@ -19,7 +19,13 @@ from src.platform.authorization.models import (
     Module,
 )
 from src.platform.database.session import get_db
-from src.platform.tenancy.models import Company, CompanyStatus
+from src.platform.tenancy.models import (
+    Company,
+    CompanyStatus,
+    Estudio,
+    Membership,
+    MembershipStatus,
+)
 from src.platform.users.models import User
 
 router = APIRouter(prefix="/api/companies", tags=["companies"])
@@ -49,6 +55,10 @@ class ModuleEntitlementResponse(BaseModel):
 
 class ModuleEntitlementInput(BaseModel):
     module_key: str
+
+
+class TransferInput(BaseModel):
+    estudio_id: int
 
 
 @router.get("", response_model=list[CompanyResponse])
@@ -88,6 +98,40 @@ def update_company(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
     company.ruc = payload.ruc
     company.razon_social = payload.razon_social
+    db.commit()
+    db.refresh(company)
+    return CompanyResponse.model_validate(company)
+
+
+@router.post("/{company_id}/transfer", response_model=CompanyResponse)
+def transfer_company(
+    company_id: int,
+    payload: TransferInput,
+    _admin: User = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> CompanyResponse:
+    """Traspasa la empresa a otro estudio (cambio de contador).
+
+    Corte limpio: reasigna el `estudio_id` y desactiva las membresías directas en
+    la empresa. El estudio destino la ve por su rol admin; reasigna a su equipo lo
+    que haga falta. El origen deja de verla. (Verificación con Clave SOL: futura.)
+    """
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
+    if db.get(Estudio, payload.estudio_id) is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="Estudio destino no encontrado"
+        )
+
+    company.estudio_id = payload.estudio_id
+    for membership in db.scalars(
+        select(Membership).where(
+            Membership.company_id == company.id,
+            Membership.status == MembershipStatus.activo,
+        )
+    ):
+        membership.status = MembershipStatus.inactivo
     db.commit()
     db.refresh(company)
     return CompanyResponse.model_validate(company)
