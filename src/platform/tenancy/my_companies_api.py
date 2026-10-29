@@ -1,9 +1,9 @@
 """
-Alta de empresas self-service (Modelo B).
+Alta de empresas self-service.
 
-Un usuario autenticado crea una empresa nueva y queda como su Admin. La empresa
-nace SIN módulos: activarlos es acción del SuperAdmin, que así conserva el control
-de acceso (y la palanca de cobro). Pensado para el contador que agrega sus RUCs.
+Un usuario autenticado crea una empresa nueva en su estudio y queda como admin
+del estudio (ve toda su cartera); no se le crea una membresía por empresa, que
+sería redundante. La empresa nace con todos los módulos (provisional).
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,7 +14,12 @@ from src.platform.authorization.entitlements import activar_todos_los_modulos
 from src.platform.authorization.models import Role
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
-from src.platform.tenancy.models import Company, Estudio, Membership
+from src.platform.tenancy.models import (
+    Company,
+    Estudio,
+    EstudioMember,
+    EstudioMemberStatus,
+)
 from src.platform.users.models import User
 
 router = APIRouter(prefix="/api/my-companies", tags=["my-companies"])
@@ -22,13 +27,28 @@ router = APIRouter(prefix="/api/my-companies", tags=["my-companies"])
 _ADMIN_ROLE_KEY = "admin_empresa"
 
 
-def _estudio_del_usuario(db: Session, user: User) -> Estudio:
-    """Estudio propio del usuario (del que es dueño); lo crea si aún no tiene."""
+def _estudio_del_usuario(db: Session, user: User, admin_role_id: int) -> Estudio:
+    """Estudio propio del usuario; lo crea si no tiene y lo deja como admin del
+    estudio (así ve toda su cartera sin membresías por empresa)."""
     estudio = db.scalar(select(Estudio).where(Estudio.owner_user_id == user.id))
     if estudio is None:
         estudio = Estudio(nombre=f"Estudio {user.nombre}", owner_user_id=user.id)
         db.add(estudio)
         db.flush()
+    miembro = db.scalar(
+        select(EstudioMember).where(
+            EstudioMember.estudio_id == estudio.id,
+            EstudioMember.user_id == user.id,
+        )
+    )
+    if miembro is None:
+        db.add(
+            EstudioMember(
+                estudio_id=estudio.id, user_id=user.id, role_id=admin_role_id
+            )
+        )
+    elif miembro.status != EstudioMemberStatus.activo:
+        miembro.status = EstudioMemberStatus.activo
     return estudio
 
 
@@ -67,13 +87,12 @@ def create_my_company(
             detail="Falta el rol base 'admin_empresa' (ejecuta el seed)",
         )
 
-    estudio = _estudio_del_usuario(db, user)
+    estudio = _estudio_del_usuario(db, user, admin_role.id)
     company = Company(
         ruc=payload.ruc, razon_social=payload.razon_social, estudio_id=estudio.id
     )
     db.add(company)
     db.flush()
-    db.add(Membership(user_id=user.id, company_id=company.id, role_id=admin_role.id))
     activar_todos_los_modulos(db, company.id)
     db.commit()
     db.refresh(company)

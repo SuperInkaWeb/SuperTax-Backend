@@ -87,9 +87,6 @@ def test_aprobar_solicitud_crea_empresa_usuario_y_membresia(db_session, monkeypa
     user = db_session.scalar(select(User).where(User.email == "cli@e.pe"))
     assert company is not None
     assert user is not None and user.auth0_sub == "auth0|cli@e.pe"
-    membership = db_session.scalar(select(Membership).where(Membership.user_id == user.id))
-    assert membership is not None
-    assert db_session.get(Role, membership.role_id).key == "admin_empresa"
 
     # La aprobación crea un estudio para el nuevo contador, con la empresa colgada
     # de él y el usuario como admin del estudio (tapa el hueco de estudio_id).

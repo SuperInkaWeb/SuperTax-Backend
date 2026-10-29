@@ -7,10 +7,11 @@ from src.platform.authorization.models import (
     CompanyModule,
     CompanyModuleStatus,
     Module,
+    Role,
 )
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
-from src.platform.tenancy.models import Company, Estudio, Membership
+from src.platform.tenancy.models import Company, Estudio, EstudioMember, Membership
 from src.platform.users.models import User
 from src.seed import seed
 
@@ -43,12 +44,6 @@ def test_crear_mi_empresa_me_hace_admin(db_session):
 
     company = db_session.scalar(select(Company).where(Company.ruc == "20555666777"))
     assert company is not None
-    membresia = db_session.scalar(
-        select(Membership).where(
-            Membership.user_id == user.id, Membership.company_id == company.id
-        )
-    )
-    assert membresia is not None
 
     # La empresa queda colgada del estudio propio del usuario (del que es dueño).
     estudio = db_session.scalar(
@@ -56,6 +51,19 @@ def test_crear_mi_empresa_me_hace_admin(db_session):
     )
     assert estudio is not None
     assert company.estudio_id == estudio.id
+
+    # El dueño queda como admin del ESTUDIO, no con una membresía por empresa.
+    miembro = db_session.scalar(
+        select(EstudioMember).where(
+            EstudioMember.estudio_id == estudio.id, EstudioMember.user_id == user.id
+        )
+    )
+    assert miembro is not None
+    assert db_session.get(Role, miembro.role_id).key == "admin_empresa"
+    assert (
+        db_session.scalar(select(Membership).where(Membership.company_id == company.id))
+        is None
+    )
 
 
 def test_crear_dos_empresas_reusa_el_mismo_estudio(db_session):
