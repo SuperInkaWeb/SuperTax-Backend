@@ -41,15 +41,15 @@ def get_active_context(
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Empresa no encontrada")
 
-    membership = get_active_membership(db, user.id, x_company_id)
-    if membership is not None:
-        role_id = membership.role_id
-    else:
-        # Sin membresía directa: solo accede si es admin del estudio dueño.
-        role_id = estudio_admin_role_id(db, user.id, company.estudio_id)
-        if role_id is None:
+    # Un admin del estudio dueño siempre tiene acceso admin, por encima de
+    # cualquier membresía directa de menor rol (un admin es admin en toda su cartera).
+    role_id = estudio_admin_role_id(db, user.id, company.estudio_id)
+    if role_id is None:
+        membership = get_active_membership(db, user.id, x_company_id)
+        if membership is None:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, detail="No pertenece a la empresa indicada"
             )
+        role_id = membership.role_id
 
     return ActiveContext(user=user, company=company, role_id=role_id)

@@ -118,6 +118,29 @@ def test_estudio_miembro_no_admin_no_da_acceso_total(db_session):
     assert estudio_admin_role_id(db_session, user.id, estudio.id) is None
 
 
+def test_admin_de_estudio_gana_sobre_membresia_directa_menor(db_session):
+    # Un admin de estudio con una membresía directa de menor rol igual opera como admin.
+    from src.platform.tenancy.current_tenant import get_active_context
+
+    admin_role = Role(key="admin_empresa", nombre="Admin")
+    operador = Role(key="operador", nombre="Operador")
+    user = User(email="a@e.pe", nombre="A", auth0_sub="auth0|a")
+    db_session.add_all([admin_role, operador, user])
+    db_session.flush()
+    estudio = Estudio(nombre="E", owner_user_id=user.id)
+    db_session.add(estudio)
+    db_session.flush()
+    company = Company(ruc="20123456789", razon_social="C", estudio_id=estudio.id)
+    db_session.add(company)
+    db_session.flush()
+    db_session.add(EstudioMember(estudio_id=estudio.id, user_id=user.id, role_id=admin_role.id))
+    db_session.add(Membership(user_id=user.id, company_id=company.id, role_id=operador.id))
+    db_session.flush()
+
+    ctx = get_active_context(x_company_id=company.id, user=user, db=db_session)
+    assert ctx.role_id == admin_role.id
+
+
 def test_seed_define_los_cuatro_roles(db_session):
     seed(db_session)
 
