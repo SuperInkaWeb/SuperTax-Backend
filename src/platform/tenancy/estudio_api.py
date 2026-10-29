@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.platform.authorization.deps import require_platform_admin
 from src.platform.authorization.models import Role
 from src.platform.database.session import get_db
 from src.platform.identity import auth0
@@ -46,6 +47,12 @@ class AdminInvite(BaseModel):
     email: EmailStr
     nombre: str = Field(min_length=1, max_length=150)
     estudio_id: int | None = None  # requerido solo si administras más de un estudio
+
+
+class EstudioAllItem(BaseModel):
+    id: int
+    nombre: str
+    owner_email: str
 
 
 class _MemberResponse(BaseModel):
@@ -119,6 +126,21 @@ def list_mis_estudios(
     return [
         EstudioItem(id=e.id, nombre=e.nombre, members=_miembros(db, e.id))
         for e in _estudios_admin(db, user)
+    ]
+
+
+@router.get("/all", response_model=list[EstudioAllItem])
+def list_all_estudios(
+    _admin: User = Depends(require_platform_admin), db: Session = Depends(get_db)
+) -> list[EstudioAllItem]:
+    """Todos los estudios (para que el SuperAdmin asigne una empresa a uno)."""
+    filas = db.execute(
+        select(Estudio, User)
+        .join(User, User.id == Estudio.owner_user_id)
+        .order_by(Estudio.nombre)
+    ).all()
+    return [
+        EstudioAllItem(id=e.id, nombre=e.nombre, owner_email=u.email) for e, u in filas
     ]
 
 

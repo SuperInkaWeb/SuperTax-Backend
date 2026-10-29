@@ -127,6 +127,30 @@ def test_crear_empresa_y_habilitar_modulo(db_session):
         app.dependency_overrides.clear()
 
 
+def test_superadmin_crea_empresa_asignada_a_un_estudio(db_session):
+    seed(db_session)
+    admin = _platform_admin(db_session)
+    owner = User(email="dueno@e.pe", nombre="Dueño", auth0_sub="auth0|dueno")
+    db_session.add(owner)
+    db_session.flush()
+    estudio = Estudio(nombre="Estudio Dueño", owner_user_id=owner.id)
+    db_session.add(estudio)
+    db_session.flush()
+
+    _override(db_session, admin)
+    try:
+        resp = TestClient(app).post(
+            "/api/companies",
+            json={"ruc": "20666666666", "razon_social": "Asignada SAC", "estudio_id": estudio.id},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 201
+    company = db_session.scalar(select(Company).where(Company.ruc == "20666666666"))
+    assert company.estudio_id == estudio.id
+
+
 def test_traspaso_mueve_empresa_a_otro_estudio(db_session):
     seed(db_session)
     superadmin = _platform_admin(db_session)

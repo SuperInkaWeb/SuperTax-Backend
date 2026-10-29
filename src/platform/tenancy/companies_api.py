@@ -34,6 +34,7 @@ router = APIRouter(prefix="/api/companies", tags=["companies"])
 class CompanyInput(BaseModel):
     ruc: str = Field(min_length=11, max_length=11)
     razon_social: str = Field(min_length=1, max_length=200)
+    estudio_id: int | None = None  # estudio dueño (al crear); se ignora al editar
 
 
 class CompanyResponse(BaseModel):
@@ -77,7 +78,11 @@ def create_company(
 ) -> CompanyResponse:
     if db.scalar(select(Company).where(Company.ruc == payload.ruc)) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="El RUC ya está registrado")
-    company = Company(ruc=payload.ruc, razon_social=payload.razon_social)
+    if payload.estudio_id is not None and db.get(Estudio, payload.estudio_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Estudio no encontrado")
+    company = Company(
+        ruc=payload.ruc, razon_social=payload.razon_social, estudio_id=payload.estudio_id
+    )
     db.add(company)
     db.flush()
     activar_todos_los_modulos(db, company.id)
