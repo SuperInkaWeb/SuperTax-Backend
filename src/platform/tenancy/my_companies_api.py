@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.platform.authorization.entitlements import activar_todos_los_modulos
 from src.platform.authorization.models import Role
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
@@ -73,6 +74,7 @@ def create_my_company(
     db.add(company)
     db.flush()
     db.add(Membership(user_id=user.id, company_id=company.id, role_id=admin_role.id))
+    activar_todos_los_modulos(db, company.id)
     db.commit()
     db.refresh(company)
     return MyCompanyResponse.model_validate(company)

@@ -10,6 +10,7 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.platform.authorization.entitlements import activar_todos_los_modulos
 from src.platform.authorization.models import Role
 from src.platform.database.base import utcnow
 from src.platform.identity import auth0
@@ -83,6 +84,7 @@ def approve_request(db: Session, request_id: int, reviewer_id: int) -> AccessReq
     company = Company(ruc=req.ruc, razon_social=req.empresa_nombre)
     db.add(company)
     db.flush()
+    activar_todos_los_modulos(db, company.id)
 
     # Auth0 gestiona la identidad y la contraseña (envía el email para fijarla).
     try:

@@ -4,7 +4,32 @@ from datetime import date
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from src.platform.authorization.models import CompanyModule, CompanyModuleStatus
+from src.platform.authorization.models import CompanyModule, CompanyModuleStatus, Module
+
+
+def activar_todos_los_modulos(db: Session, company_id: int) -> None:
+    """Activa todos los módulos del catálogo para la empresa (idempotente).
+
+    Provisional: mientras no haya suscripciones, toda empresa nace con todos los
+    módulos. Solo agrega los que falten; no reactiva los que un admin suspendió.
+    El llamador hace el commit."""
+    existentes = {
+        key
+        for (key,) in db.execute(
+            select(CompanyModule.module_key).where(
+                CompanyModule.company_id == company_id
+            )
+        ).all()
+    }
+    for (module_key,) in db.execute(select(Module.key)).all():
+        if module_key not in existentes:
+            db.add(
+                CompanyModule(
+                    company_id=company_id,
+                    module_key=module_key,
+                    status=CompanyModuleStatus.activo,
+                )
+            )
 
 
 def company_has_module(db: Session, company_id: int, module_key: str) -> bool:

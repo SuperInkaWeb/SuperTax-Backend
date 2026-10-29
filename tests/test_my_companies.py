@@ -3,6 +3,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from src.main import app
+from src.platform.authorization.models import (
+    CompanyModule,
+    CompanyModuleStatus,
+    Module,
+)
 from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
 from src.platform.tenancy.models import Company, Estudio, Membership
@@ -71,6 +76,32 @@ def test_crear_dos_empresas_reusa_el_mismo_estudio(db_session):
         select(Company).where(Company.estudio_id == estudios[0].id)
     ).all()
     assert {c.ruc for c in companies} == {"20555666777", "20555666888"}
+
+
+def test_crear_mi_empresa_activa_todos_los_modulos(db_session):
+    """Provisional (sin suscripciones): el alta activa todo el catálogo."""
+    user = _user(db_session)
+    _override(db_session, user)
+    try:
+        TestClient(app).post(
+            "/api/my-companies",
+            json={"ruc": "20555666777", "razon_social": "Cliente SAC"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    company = db_session.scalar(select(Company).where(Company.ruc == "20555666777"))
+    catalogo = {key for (key,) in db_session.execute(select(Module.key)).all()}
+    activos = {
+        key
+        for (key,) in db_session.execute(
+            select(CompanyModule.module_key).where(
+                CompanyModule.company_id == company.id,
+                CompanyModule.status == CompanyModuleStatus.activo,
+            )
+        ).all()
+    }
+    assert catalogo and activos == catalogo
 
 
 def test_crear_mi_empresa_ruc_duplicado_da_409(db_session):

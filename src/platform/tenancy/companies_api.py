@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.platform.authorization.deps import require_platform_admin
+from src.platform.authorization.entitlements import activar_todos_los_modulos
 from src.platform.authorization.models import (
     CompanyModule,
     CompanyModuleStatus,
@@ -68,6 +69,8 @@ def create_company(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="El RUC ya está registrado")
     company = Company(ruc=payload.ruc, razon_social=payload.razon_social)
     db.add(company)
+    db.flush()
+    activar_todos_los_modulos(db, company.id)
     db.commit()
     db.refresh(company)
     return CompanyResponse.model_validate(company)
