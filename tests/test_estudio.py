@@ -202,6 +202,23 @@ def test_solicitud_publica_ruc_existente_va_al_admin_dueno(db_session, monkeypat
     ) is not None
 
 
+def test_verificar_ruc_publico(db_session):
+    _estudio_con_admin(db_session)  # c1 = "Cliente 1" (RUC 20111111111)
+    app.dependency_overrides[get_db] = lambda: db_session
+    try:
+        client = TestClient(app)
+        existe = client.get(
+            "/api/access-requests/verificar-ruc", params={"ruc": "20111111111"}
+        ).json()
+        libre = client.get(
+            "/api/access-requests/verificar-ruc", params={"ruc": "20999999999"}
+        ).json()
+    finally:
+        app.dependency_overrides.clear()
+    assert existe["existe"] is True and existe["razon_social"] == "Cliente 1"
+    assert libre["existe"] is False and libre["razon_social"] is None
+
+
 def test_solicitud_publica_ruc_libre_es_estudio_nuevo(db_session):
     _estudio_con_admin(db_session)  # deja el seed listo
     app.dependency_overrides[get_db] = lambda: db_session

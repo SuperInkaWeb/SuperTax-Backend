@@ -62,6 +62,8 @@ def create_request(db: Session, data: dict) -> tuple[str, str]:
         db.commit()
         return ("acceso_empresa", company.razon_social)
 
+    if not data.get("empresa_nombre"):
+        raise OnboardingError("Falta la razón social de la empresa")
     pendiente = db.scalar(
         select(AccessRequest).where(
             AccessRequest.email == data["email"],
