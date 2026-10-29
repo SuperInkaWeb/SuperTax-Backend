@@ -22,6 +22,8 @@ from src.platform.config.settings import settings
 from src.platform.onboarding.api import router as onboarding_router
 from src.platform.support.api import router as tickets_router
 from src.platform.tenancy.companies_api import router as companies_router
+from src.platform.tenancy.company_access_api import router as company_access_router
+from src.platform.tenancy.estudio_api import router as estudio_router
 from src.platform.tenancy.members_api import router as members_router
 from src.platform.tenancy.my_companies_api import router as my_companies_router
 from src.platform.tenancy.team_api import router as team_router
@@ -37,6 +39,8 @@ _CORE_ROUTERS = (
     companies_router,
     my_companies_router,
     members_router,
+    estudio_router,
+    company_access_router,
     team_router,
     roles_router,
     tickets_router,

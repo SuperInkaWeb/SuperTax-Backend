@@ -48,7 +48,7 @@ def db_session():
     connection.execute(
         text(
             "TRUNCATE core.role_permissions, core.memberships, core.estudio_members, "
-            "core.company_modules, "
+            "core.company_modules, core.company_access_requests, "
             "core.access_requests, core.company_credentials, "
             "core.users, core.companies, core.estudios, core.roles, "
             "core.permissions, core.modules, "
@@ -70,3 +70,6 @@ def db_session():
         session.close()
         transaction.rollback()
         connection.close()
+        # Libera el pool del engine: sin esto cada test deja una conexión viva y
+        # se agota el máximo del Postgres de prueba (los últimos tests se omiten).
+        engine.dispose()

@@ -8,7 +8,7 @@ Es la pieza central del multi-tenant de la plataforma.
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.platform.database.base import Base, utcnow
@@ -94,6 +94,47 @@ class Company(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class CompanyAccessRequestStatus(str, enum.Enum):
+    pendiente = "pendiente"
+    aprobado = "aprobado"
+    rechazado = "rechazado"
+
+
+class CompanyAccessRequest(Base):
+    """Solicitud de un usuario YA registrado para acceder a una empresa que ya
+    existe (su RUC está tomado por otro estudio). La aprueba un admin del estudio
+    dueño, que al hacerlo le concede una membresía con el rol que elija.
+    """
+
+    __tablename__ = "company_access_requests"
+    __table_args__ = {"schema": "core"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    requester_user_id: Mapped[int] = mapped_column(
+        ForeignKey("core.users.id", ondelete="CASCADE"), index=True
+    )
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("core.companies.id", ondelete="CASCADE"), index=True
+    )
+    mensaje: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[CompanyAccessRequestStatus] = mapped_column(
+        Enum(CompanyAccessRequestStatus, name="company_access_request_status"),
+        default=CompanyAccessRequestStatus.pendiente,
+    )
+    # Rol concedido al aprobar (lo elige el admin dueño).
+    role_id: Mapped[int | None] = mapped_column(
+        ForeignKey("core.roles.id"), nullable=True
+    )
+    reviewed_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("core.users.id"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class MembershipStatus(str, enum.Enum):
