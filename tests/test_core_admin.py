@@ -148,6 +148,31 @@ def test_superadmin_crea_empresa_asignada_a_un_estudio(db_session):
     assert company.estudio_id == estudio.id
 
 
+def test_invitar_admin_por_empresa_es_rechazado(db_session, monkeypatch):
+    # Admin no se asigna por empresa (va a nivel estudio): debe dar 400.
+    seed(db_session)
+    _mock_auth0(monkeypatch)
+    company = Company(ruc="20777777777", razon_social="X")
+    admin = User(email="adm2@e.pe", nombre="Adm", auth0_sub="auth0|adm2")
+    db_session.add_all([company, admin])
+    db_session.flush()
+    admin_role = db_session.scalar(select(Role).where(Role.key == "admin_empresa"))
+    db_session.add(
+        Membership(user_id=admin.id, company_id=company.id, role_id=admin_role.id)
+    )
+    db_session.flush()
+    _override(db_session, admin)
+    try:
+        resp = TestClient(app).post(
+            "/api/members",
+            headers={"X-Company-Id": str(company.id)},
+            json={"email": "x@e.pe", "nombre": "X", "role_key": "admin_empresa"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 400
+
+
 def test_traspaso_mueve_empresa_a_otro_estudio(db_session):
     seed(db_session)
     superadmin = _platform_admin(db_session)

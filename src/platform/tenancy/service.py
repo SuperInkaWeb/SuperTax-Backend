@@ -13,6 +13,10 @@ from src.platform.tenancy.models import (
 # Rol que, a nivel estudio, otorga acceso total a todas sus empresas.
 ADMIN_ROLE_KEY = "admin_empresa"
 
+# Roles que se asignan por empresa (staff acotado). Admin NO va aquí: un admin se
+# gestiona a nivel estudio (estudio_members), nunca por empresa.
+ASSIGNABLE_ROLE_KEYS = ("operador", "asistente", "consulta")
+
 
 def get_active_membership(db: Session, user_id: int, company_id: int) -> Membership | None:
     """Devuelve la membresía activa del usuario en la empresa, o None."""

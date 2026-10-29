@@ -26,6 +26,7 @@ from src.platform.tenancy.models import (
 )
 from src.platform.tenancy.service import (
     ADMIN_ROLE_KEY,
+    ASSIGNABLE_ROLE_KEYS,
     estudio_admin_role_id,
     get_active_membership,
 )
@@ -164,6 +165,11 @@ def revisar(
         if not payload.role_key:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, detail="Indica el rol a conceder (role_key)"
+            )
+        if payload.role_key not in ASSIGNABLE_ROLE_KEYS:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="Rol inválido (usa operador, asistente o consulta)",
             )
         role = db.scalar(select(Role).where(Role.key == payload.role_key))
         if role is None or role.scope != RoleScope.company:

@@ -31,7 +31,7 @@ from src.platform.tenancy.models import (
     Membership,
     MembershipStatus,
 )
-from src.platform.tenancy.service import ADMIN_ROLE_KEY
+from src.platform.tenancy.service import ADMIN_ROLE_KEY, ASSIGNABLE_ROLE_KEYS
 from src.platform.users.models import User, UserStatus
 
 router = APIRouter(prefix="/api/team", tags=["team"])
@@ -74,6 +74,12 @@ def _empresas_administradas(db: Session, user: User) -> set[int]:
 
 
 def _rol_de_empresa(db: Session, role_key: str) -> Role:
+    # Admin no se asigna por empresa: un admin se gestiona a nivel estudio.
+    if role_key not in ASSIGNABLE_ROLE_KEYS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Rol inválido para una empresa (usa operador, asistente o consulta)",
+        )
     role = db.scalar(select(Role).where(Role.key == role_key))
     if role is None or role.scope != RoleScope.company:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Rol inválido")
