@@ -11,7 +11,7 @@ from src.platform.database.session import get_db
 from src.platform.identity import auth0
 from src.platform.identity.current_user import get_current_user
 from src.platform.onboarding.models import AccessRequest
-from src.platform.tenancy.models import Company, Membership
+from src.platform.tenancy.models import Company, Estudio, EstudioMember, Membership
 from src.platform.users.models import User
 from src.seed import seed
 
@@ -90,6 +90,19 @@ def test_aprobar_solicitud_crea_empresa_usuario_y_membresia(db_session, monkeypa
     membership = db_session.scalar(select(Membership).where(Membership.user_id == user.id))
     assert membership is not None
     assert db_session.get(Role, membership.role_id).key == "admin_empresa"
+
+    # La aprobación crea un estudio para el nuevo contador, con la empresa colgada
+    # de él y el usuario como admin del estudio (tapa el hueco de estudio_id).
+    estudio = db_session.scalar(select(Estudio).where(Estudio.owner_user_id == user.id))
+    assert estudio is not None
+    assert company.estudio_id == estudio.id
+    miembro = db_session.scalar(
+        select(EstudioMember).where(
+            EstudioMember.estudio_id == estudio.id, EstudioMember.user_id == user.id
+        )
+    )
+    assert miembro is not None
+    assert db_session.get(Role, miembro.role_id).key == "admin_empresa"
 
 
 # ─────────────────────── Empresas y módulos ───────────────────────

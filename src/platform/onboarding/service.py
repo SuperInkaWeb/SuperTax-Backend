@@ -15,7 +15,7 @@ from src.platform.authorization.models import Role
 from src.platform.database.base import utcnow
 from src.platform.identity import auth0
 from src.platform.onboarding.models import AccessRequest, AccessRequestStatus
-from src.platform.tenancy.models import Company, Membership
+from src.platform.tenancy.models import Company, Estudio, EstudioMember, Membership
 from src.platform.users.models import User, UserStatus
 
 ADMIN_ROLE_KEY = "admin_empresa"
@@ -81,12 +81,8 @@ def approve_request(db: Session, request_id: int, reviewer_id: int) -> AccessReq
     if admin_role is None:
         raise OnboardingError("Falta el rol base 'admin_empresa' (ejecuta el seed)")
 
-    company = Company(ruc=req.ruc, razon_social=req.empresa_nombre)
-    db.add(company)
-    db.flush()
-    activar_todos_los_modulos(db, company.id)
-
     # Auth0 gestiona la identidad y la contraseña (envía el email para fijarla).
+    # Va primero: si falla, no se crea nada en la BD.
     try:
         auth0_sub = auth0.crear_usuario(
             req.email, req.nombre, secrets.token_urlsafe(12) + "A1!"
@@ -103,7 +99,22 @@ def approve_request(db: Session, request_id: int, reviewer_id: int) -> AccessReq
     )
     db.add(user)
     db.flush()
+
+    # La aprobación da de alta un ESTUDIO nuevo (el del contador que solicitó),
+    # con la empresa colgada de él y el usuario como admin del estudio.
+    estudio = Estudio(nombre=f"Estudio {req.nombre}", owner_user_id=user.id)
+    db.add(estudio)
+    db.flush()
+
+    company = Company(
+        ruc=req.ruc, razon_social=req.empresa_nombre, estudio_id=estudio.id
+    )
+    db.add(company)
+    db.flush()
+    activar_todos_los_modulos(db, company.id)
+
     db.add(Membership(user_id=user.id, company_id=company.id, role_id=admin_role.id))
+    db.add(EstudioMember(estudio_id=estudio.id, user_id=user.id, role_id=admin_role.id))
 
     req.status = AccessRequestStatus.aprobado
     req.reviewed_by_id = reviewer_id
