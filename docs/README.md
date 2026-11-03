@@ -1,8 +1,9 @@
 # Documentación — plataforma-backend
 
-Plataforma SaaS unificada (**Scanner · SUNAT · SIRE**) construida como **monolito
-modular** con FastAPI: tres módulos de negocio con arquitectura hexagonal sobre un
-núcleo compartido (`platform/`).
+Plataforma contable SaaS (**SUNAT · SIRE · Scanner · DataFilter · Correos**)
+construida como **monolito modular** con FastAPI: cinco módulos de negocio con
+arquitectura hexagonal sobre un núcleo compartido (`platform/`), con un modelo
+multi-tenant de **estudios contables** (ver [architecture/tenancy.md](architecture/tenancy.md)).
 
 Esta carpeta es la **fuente de verdad** de la documentación cross-cutting. El
 frontend tiene su propia carpeta `docs/` para lo específico de la SPA.
@@ -29,6 +30,8 @@ frontend tiene su propia carpeta `docs/` para lo específico de la SPA.
 - [sunat.md](modules/sunat.md) — descarga de comprobantes (híbrido Playwright + API consultacpe)
 - [sire.md](modules/sire.md) — conciliación de registros de compras/ventas
 - [scanner.md](modules/scanner.md) — extracción OCR + IA de documentos
+- **DataFilter** — análisis de archivos grandes con DuckDB (sin doc dedicada aún; ver `../manuales/` y [data-model.md](platform/data-model.md))
+- **Correos** — automatización de buzones y extracción de adjuntos (sin doc dedicada aún)
 
 ### Plataforma (núcleo)
 - [auth.md](platform/auth.md) — identidad Auth0, pipeline de seguridad, RBAC
@@ -45,6 +48,11 @@ frontend tiene su propia carpeta `docs/` para lo específico de la SPA.
 - [setup-local.md](operations/setup-local.md) — entorno de desarrollo
 - [deploy.md](operations/deploy.md) — Neon + R2 + Railway + Vercel + Auth0
 - [env-vars.md](operations/env-vars.md) — todas las variables en una tabla
+- [informe-datafilter-memoria-railway.md](operations/informe-datafilter-memoria-railway.md) — análisis de consumo de memoria de DataFilter y solución
+
+### Manuales (para usuarios finales)
+- [../manuales/manual-usuario.md](../manuales/manual-usuario.md) — uso diario de los módulos
+- [../manuales/manual-administrador.md](../manuales/manual-administrador.md) — gestión de estudio, equipo y roles
 
 ### Decisiones de arquitectura (ADR)
 - [0001-monolito-modular.md](decisions/0001-monolito-modular.md)

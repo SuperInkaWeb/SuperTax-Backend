@@ -1,7 +1,8 @@
 # Manual de Usuario — SuperTax
 
 Guía para usar la plataforma en tu día a día: descargar comprobantes de SUNAT,
-conciliar registros con SIRE y digitalizar documentos con el Escáner.
+conciliar registros con SIRE, digitalizar documentos con el Escáner, analizar
+archivos grandes con DataFilter y automatizar correos.
 
 > Este manual es para quien **usa** la aplicación. Las tareas de administración
 > (invitar personas, permisos) están en el *Manual de Administrador*.
@@ -18,8 +19,22 @@ conciliar registros con SIRE y digitalizar documentos con el Escáner.
    recibir una invitación para **establecer tu contraseña**.
 4. Al entrar verás la pantalla de **Inicio**.
 
-Si no tienes acceso todavía, usa la opción **Solicitar acceso** desde la misma
-pantalla de login.
+### 1.1b Solicitar acceso (si aún no tienes cuenta)
+
+Desde la pantalla de login, pulsa **Solicitar acceso**. Es un formulario de **2 pasos**:
+
+1. **Paso 1 — RUC**: ingresa el RUC de la empresa y pulsa *Continuar*.
+2. **Paso 2 — según el RUC**:
+   - **Si el RUC está libre**: registras tu estudio. Completa razón social, nombre y
+     correo. Lo revisa un administrador de la plataforma.
+   - **Si el RUC ya está registrado**: pertenece a otro estudio. Verás su nombre y
+     podrás **solicitar acceso a su administrador** (solo nombre y correo).
+
+Cuando aprueben tu solicitud, llegará un **correo** para **establecer tu contraseña** e
+ingresar.
+
+> A una empresa ya registrada solo se entra por **invitación** o **solicitud aprobada**
+> por su administrador: no hay registro libre a un RUC ajeno.
 
 ### 1.2 Elegir la empresa activa
 
@@ -42,8 +57,13 @@ empresa tenga contratado:
 | **SIRE** | Conciliación de registros de compras y ventas |
 | **SUNAT** | Descarga de comprobantes electrónicos |
 | **Escaneo** | Digitalización y extracción de datos de documentos |
+| **DataFilter** | Análisis de archivos grandes (filtrar, pivotear, reemplazar) |
+| **Correos** | Automatización: conectar buzones y extraer datos de adjuntos |
 | **Soporte** | Enviar y consultar tickets de soporte |
-| **Administración** | Gestión de empresa, equipo y accesos (solo administradores) |
+| **Administración** | Gestión del estudio, equipo y accesos (solo administradores) |
+
+Además, el ícono de **Conexiones** (arriba) centraliza tus credenciales: la **Clave
+SOL** se llena una vez y sirve para SUNAT y SIRE.
 
 > Si no ves una sección, es porque tu empresa no tiene ese módulo activo o tu
 > usuario no tiene permiso. Consulta con tu administrador.
@@ -191,7 +211,31 @@ gas, telefonía) y documentos laborales (asistencia, boleta de pago).
 
 ---
 
-## 5. Seguridad de tu clave SOL
+## 5. DataFilter — Análisis de archivos grandes
+
+El módulo **DataFilter** te deja subir archivos grandes (hasta varios GB) y
+**filtrar, pivotear y reemplazar** columnas, y descargar el resultado.
+
+1. **Sube** el archivo (CSV/Excel). La subida es **directa** y rápida incluso para
+   varios GB.
+2. Cuando esté **listo**, navega los datos, aplica **filtros** y **tablas dinámicas**,
+   o haz **buscar-y-reemplazar** por columna.
+3. **Descarga** el resultado (la descarga de archivos grandes también es directa).
+
+> Si navegas muchas filas de un archivo muy grande, la operación puede tardar un poco:
+> trabaja sobre el archivo completo aunque en pantalla veas una página a la vez.
+
+## 6. Automatización de correos
+
+El módulo **Correos** conecta un buzón (Gmail/Outlook) y **extrae los datos de los
+adjuntos** automáticamente.
+
+1. Conecta tu buzón autorizando con tu cuenta (OAuth).
+2. Lanza un **escaneo**: la plataforma revisa los correos y procesa los adjuntos
+   (con ayuda de IA) para extraer su información.
+3. Revisa y **exporta** los registros extraídos.
+
+## 7. Seguridad de tu clave SOL
 
 - Tu clave SOL se guarda **cifrada**; nadie la ve en texto plano, ni siquiera en
   los registros del sistema.

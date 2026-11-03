@@ -1,113 +1,138 @@
 # Manual de Administrador — SuperTax
 
-Guía para administrar la plataforma: personas, accesos y (para el administrador
-general) empresas y solicitudes. Complementa el *Manual de Usuario*, que cubre el
-uso diario de los módulos.
+Guía para **administradores de estudio** y para el **administrador de plataforma
+(SuperAdmin)**. Complementa el *Manual de Usuario*, que cubre el uso diario de los
+módulos.
 
-> Para administrar necesitas ser **administrador de la empresa** o
-> **administrador de plataforma**. Si no lo eres, no verás la sección
-> **Administración**.
+> La sección **Administración** aparece en el menú solo si eres administrador de
+> estudio o de plataforma.
 
 ---
 
-## 1. Tipos de administrador
+## 1. Conceptos del modelo de estudios
+
+- **Estudio** — tu grupo contable (el inquilino). Dueño de la **cartera de empresas**.
+- **Empresa** — un cliente, con **RUC único**. Pertenece a **un solo** estudio.
+- **Usuario** — una persona con su correo.
+
+Regla central: **un RUC = un estudio dueño**. Nadie puede “reclamar” un RUC ajeno; a
+una empresa existente se entra por **invitación** o **solicitud aprobada** por su
+administrador.
+
+## 2. Dos niveles de administración
+
+| Nivel | Quién | Alcance |
+|---|---|---|
+| **Admin de estudio** | Tú y tus co-admins | Todo **tu** estudio: cartera, equipo y accesos. |
+| **SuperAdmin de plataforma** | El operador de SuperTax | Aprobar estudios nuevos, crear empresas, activar módulos, traspasos. |
+
+**Pestañas de Administración según tu rol:**
+- Admin de estudio: **Miembros**, **Equipo**, **Administradores**, **Solicitudes de acceso**.
+- SuperAdmin: además **Empresas** y **Solicitudes** (altas de estudio).
+
+## 3. Roles y qué hace cada uno
 
 | Rol | Alcance | Qué puede hacer |
 |---|---|---|
-| **Administrador de empresa** | Su(s) empresa(s) | Gestionar **Miembros** y **Equipo** de la empresa |
-| **Administrador de plataforma** | Toda la plataforma | Además, gestionar **Empresas** y **Solicitudes** de acceso |
+| **Admin de estudio** | **Todas** las empresas del estudio | Todo: operar módulos, registrar empresas, invitar/quitar co-admins, asignar clientes y roles, aprobar solicitudes. |
+| **Contador / Operador** | Solo clientes asignados | Operar todos los módulos de sus clientes (incluye borrar y gestionar credenciales). No gestiona equipo ni registra empresas. |
+| **Asistente** | Solo asignados | Trabajo diario **sin** borrar ni cambiar credenciales. |
+| **Consulta** | Solo asignados | Solo ver y descargar (ideal para el dueño del negocio o un auditor externo). |
 
-La sección **Administración** aparece en el menú lateral solo si tienes uno de
-estos roles. Sus pestañas cambian según tu rol:
+> El rol **Admin es de estudio, no de empresa**: no se asigna “Admin” por empresa. Los
+> administradores se gestionan en la pestaña **Administradores**.
 
-- Administrador de empresa: **Miembros**, **Equipo**.
-- Administrador de plataforma: además **Empresas** y **Solicitudes**.
+## 4. Administradores del estudio (pestaña **Administradores**)
 
----
+Para que el estudio **no dependa de una sola persona**, ten **varios admins**. Todos
+ven y operan toda la cartera.
 
-## 2. Miembros (quién pertenece a la empresa)
+- **Ver** los administradores actuales.
+- **Agregar co-admin**: ingresa correo y nombre → recibe un correo para fijar su
+  contraseña y queda como admin del estudio.
+- **Quitar co-admin**: deja de ver/operar las empresas. (No puedes quitarte a ti mismo.)
 
-La pestaña **Miembros** lista a las personas que tienen acceso a la empresa activa
-y su rol.
+## 5. Equipo y Miembros (staff acotado)
 
-Desde aquí puedes:
+Para colaboradores con acceso **solo a ciertos clientes**:
 
-1. **Ver** los miembros actuales y su rol.
-2. **Invitar** a una persona nueva (por correo). Recibirá una invitación para
-   establecer su contraseña e ingresar.
-3. **Cambiar el rol** de un miembro (por ejemplo, hacerlo administrador de la
-   empresa).
-4. **Quitar** el acceso de un miembro a la empresa.
+- **Equipo** (multi-empresa): asigna a una persona **varios clientes** a la vez con un
+  rol (operador/asistente/consulta) y activa/desactiva su acceso por cliente.
+- **Miembros** (empresa activa): gestiona quién accede a **la empresa seleccionada**:
+  invitar, cambiar rol o remover.
 
-> Antes de invitar, confirma que la empresa activa (arriba) es la correcta: los
-> miembros se agregan a **esa** empresa.
+> En estas pantallas el rol asignable es **operador / asistente / consulta**. “Admin” no
+> aparece (se gestiona en Administradores).
+>
+> **Externos** (dueño del negocio / auditor): invítalos con rol **Consulta** a su
+> empresa; verán solo esa empresa, en modo lectura.
 
-### Cómo invitar a alguien
+## 6. Solicitudes de acceso (pestaña **Solicitudes de acceso**)
 
-1. Verifica la **empresa activa** en el selector de arriba.
-2. Entra a **Administración → Miembros**.
-3. Pulsa **invitar** e ingresa el **correo** de la persona y su **rol**.
-4. Confirma. La persona recibirá el correo para establecer su contraseña.
-5. Cuando ingrese por primera vez, aparecerá en la lista como miembro activo.
+Cuando alguien pide acceso a una de **tus** empresas (intentó registrar un RUC que ya es
+tuyo, o solicitó acceso desde adentro):
 
----
+1. La solicitud aparece en tu bandeja (quién la pide y a qué empresa).
+2. **Aprobar**: eliges el **rol** con el que entrará. Si la persona no tenía cuenta, se
+   le **provisiona** (recibe correo para fijar contraseña) y queda con acceso.
+3. **Rechazar**: no obtiene acceso.
 
-## 3. Equipo
+> Así nadie entra a tus empresas “a ciegas”: **tú** decides quién y con qué rol.
 
-La pestaña **Equipo** ofrece una vista del equipo de la empresa. Úsala para
-revisar de un vistazo quiénes colaboran y su estado.
+## 7. Tareas del SuperAdmin de plataforma
 
----
+### 7.1 Aprobar altas de estudio (pestaña **Solicitudes**)
+Las solicitudes públicas con un **RUC libre** llegan aquí. Al **aprobar**, se crea el
+**estudio** del nuevo contador + su primera empresa + su cuenta + los módulos.
 
-## 4. Empresas (solo administrador de plataforma)
+### 7.2 Empresas (pestaña **Empresas**)
+- Listar todas las empresas de la plataforma.
+- **Crear** una empresa (eligiendo su **estudio dueño**).
+- **Editar** razón social / RUC.
+- **Módulos**: activar/suspender módulos por empresa. *(Hoy las empresas nacen con todos
+  los módulos; esto cambiará con planes/suscripciones.)*
 
-La pestaña **Empresas** permite gestionar las empresas de la plataforma.
+### 7.3 Traspaso (cambio de contador)
+Mover una empresa a otro estudio: el destino pasa a verla, el origen deja de verla
+(corte limpio). *(Verificación con Clave SOL: mejora futura.)*
 
-Desde aquí puedes:
+## 8. Buenas prácticas de seguridad
 
-1. **Ver** las empresas registradas.
-2. **Crear** una empresa nueva.
-3. Revisar sus datos y los módulos que tiene activos (SUNAT, SIRE, Escaneo).
+- **Mínimo privilegio**: el rol más bajo que permita el trabajo.
+- **Varios admins** de estudio (no depender de una sola persona).
+- **Externos acotados**: Consulta y solo a su empresa.
+- **Revisa las solicitudes** antes de aprobar: confirma que la persona trabaja con esa
+  empresa.
+- **Al desvincular a alguien**, remuévelo del equipo o quítale el co-admin a tiempo.
+- **Credenciales SOL**: se guardan cifradas; cámbialas si sospechas de una fuga.
 
----
+## 9. Resumen “quién puede hacer qué”
 
-## 5. Solicitudes de acceso (solo administrador de plataforma)
-
-Cuando alguien usa **Solicitar acceso** desde la pantalla de inicio de sesión, su
-petición llega a la pestaña **Solicitudes**.
-
-1. Entra a **Administración → Solicitudes**.
-2. Revisa cada solicitud (quién es, qué pide).
-3. **Aprueba** o **rechaza**. Al aprobar, la persona obtiene acceso según lo
-   definido.
-
----
-
-## 6. Buenas prácticas de acceso
-
-- **Menor privilegio**: da rol de administrador solo a quien realmente lo necesita.
-- **Revisa periódicamente los Miembros**: quita el acceso de quien ya no colabora.
-- **Una empresa a la vez**: recuerda que Miembros y Equipo se administran sobre la
-  **empresa activa**; cambia de empresa en el selector si gestionas varias.
-- **Credenciales SOL**: son responsabilidad de cada usuario y se guardan cifradas;
-  como administrador no las ves.
+| Acción | Admin estudio | Operador | Asistente | Consulta | SuperAdmin |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Ver toda la cartera | ✅ | — | — | — | ✅ |
+| Operar módulos de un cliente | ✅ | ✅ (asignados) | ✅ (sin borrar) | 👁️ ver | — |
+| Invitar co-admins | ✅ | — | — | — | — |
+| Asignar clientes a staff | ✅ | — | — | — | — |
+| Aprobar solicitudes de acceso | ✅ | — | — | — | — |
+| Aprobar altas de estudio | — | — | — | — | ✅ |
+| Crear empresas / activar módulos | ✅ (su estudio) | — | — | — | ✅ (global) |
+| Traspasar empresas entre estudios | — | — | — | — | ✅ |
 
 ---
 
 ## Preguntas frecuentes
 
-**Invité a alguien pero no aparece en Miembros.**
-Aparecerá cuando **ingrese por primera vez** (tras establecer su contraseña desde
-el correo de invitación).
+**Agregué una empresa y otro admin no la ve.**
+No debería pasar: los admins de estudio ven **toda** la cartera. Si ocurre, avisa a
+soporte (puede ser un dato heredado del modelo anterior).
 
-**No veo la pestaña Empresas ni Solicitudes.**
-Esas son solo para el **administrador de plataforma**. Como administrador de
-empresa verás **Miembros** y **Equipo**.
+**Quiero que alguien vea todo el estudio.**
+Agrégalo como **co-admin** en la pestaña Administradores (no por empresa).
 
-**Agregué un miembro a la empresa equivocada.**
-Quítalo de esa empresa, cambia la **empresa activa** a la correcta y vuelve a
-invitarlo.
+**Un cliente se fue con otro estudio contable.**
+Es un **traspaso**: lo hace el SuperAdmin, verificando que el nuevo estudio esté
+autorizado.
 
-**¿Cómo activo un módulo (SUNAT/SIRE/Escaneo) para una empresa?**
-Los módulos por empresa los gestiona el administrador de plataforma. Si falta uno,
-solicítalo a ese nivel.
+**Invité a alguien pero no aparece.**
+Aparecerá cuando **ingrese por primera vez** (tras fijar su contraseña desde el correo).

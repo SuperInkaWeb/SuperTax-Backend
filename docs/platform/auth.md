@@ -11,7 +11,7 @@ Toda ruta protegida encadena estas dependencias de FastAPI, en orden:
 ```
 HTTPBearer                → extrae el token del header Authorization
   └─ get_current_user     → valida el JWT (Auth0) y carga el User de core.users
-       └─ get_active_context   → resuelve la empresa activa (X-Company-Id) y valida membresía
+       └─ get_active_context   → resuelve la empresa activa (X-Company-Id) y valida acceso (admin de estudio o membresía)
             └─ require_module        → la empresa tiene habilitado el módulo
             └─ require_permission    → el rol del usuario tiene el permiso concreto
 ```
@@ -30,26 +30,41 @@ JWKS del tenant) y busca al usuario por `auth0_sub` en `core.users`:
 
 ### 2. Empresa activa (`platform/tenancy/`)
 
-`get_active_context` lee `X-Company-Id`, valida la membresía y devuelve
-`ActiveContext(user, company, membership)`. Sin membresía → **403**. Detalle en
-[../architecture/tenancy.md](../architecture/tenancy.md).
+`get_active_context` lee `X-Company-Id` y concede acceso si el usuario es **admin del
+estudio dueño** (prevalece) **o** tiene **membresía directa** en la empresa; si no →
+**403**. Devuelve `ActiveContext(user, company, role_id)` con el **rol efectivo**.
+Detalle en [../architecture/tenancy.md](../architecture/tenancy.md).
 
 ### 3. Autorización por módulo y permiso (`platform/authorization/`)
 
 - **Entitlements** (`entitlements.py`): ¿la empresa tiene el módulo contratado?
 - **RBAC** (`permissions.py`): `role_has_permission(db, role_id, "sunat.drive.manage")`
-  comprueba que el rol de la membresía incluya el permiso pedido.
+  comprueba que el rol efectivo incluya el permiso pedido.
 
-Los permisos son claves con formato `<módulo>.<recurso>.<acción>` (p. ej.
-`sunat.drive.manage`). Roles, permisos y su relación se siembran con `python -m src.seed`
-(idempotente). Las APIs `roles_api` gestionan roles.
+Los permisos son claves `<módulo>.<recurso>.<acción>`. Los **4 roles** se siembran con
+`python -m src.seed` (idempotente): `admin_empresa` (admin de estudio, todo),
+`operador` (contador, todo el módulo), `asistente` (día a día sin borrar ni
+credenciales), `consulta` (solo lectura). El rol **admin no se asigna por empresa** (los
+endpoints de asignación lo rechazan); se gestiona a nivel estudio.
 
-## Onboarding e invitaciones
+## Registro, onboarding e invitaciones
 
-El backend usa la **Management API M2M** de Auth0 para crear usuarios al invitarlos
-(`platform/onboarding/`, `platform/users/`). El correo de "establecer contraseña"
-lo maneja Auth0 vía la app SPA. Por eso se necesitan tanto la app SPA como la M2M
-(ver [auth-setup.md](auth-setup.md)).
+El backend usa la **Management API M2M** de Auth0 para **provisionar** usuarios; el
+correo de "establecer contraseña" lo maneja Auth0 (app SPA). No se usa el *Sign Up*
+público de Auth0: las cuentas nacen por aprobación o invitación.
+
+**Registro público en 2 pasos** (`platform/onboarding/`):
+1. La persona ingresa el **RUC** → `GET /api/access-requests/verificar-ruc`.
+2. Según el RUC:
+   - **Libre** → solicitud de **alta de estudio** (`access_requests`). La aprueba el
+     **SuperAdmin** → crea estudio + empresa + usuario + admin + módulos.
+   - **Ocupado** → solicitud de **acceso** a la empresa existente
+     (`company_access_requests`, sin cuenta aún). La aprueba el **admin dueño** →
+     provisiona la cuenta + membresía con el rol elegido.
+
+**Invitaciones (dentro de la app):** co-admin (`estudio_api`), staff a clientes
+(`team_api` / `members_api`). Todas provisionan en Auth0 y envían el correo de
+contraseña. Ver [auth-setup.md](auth-setup.md).
 
 ## Primer SuperAdmin
 
