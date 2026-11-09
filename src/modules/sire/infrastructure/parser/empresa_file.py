@@ -19,6 +19,7 @@ Formato conocido (prioridad alta):
   Solo este formato aporta fecha/base/igv, necesarios para la conciliación.
 """
 
+import csv
 import re
 import io
 from datetime import date, datetime
@@ -503,6 +504,10 @@ def _try_parse_as_ple_compras(content: bytes) -> list[EmpresaRecord] | None:
             dtype=str,
             skip_blank_lines=True,
             on_bad_lines="skip",
+            # PLE es pipe-delimited: la comilla " es un carácter literal de la razón
+            # social, no un entrecomillado. Sin esto, pandas se "come" filas con " y
+            # las descarta (bug: comprobantes perdidos del registro).
+            quoting=csv.QUOTE_NONE,
         )
     except Exception:
         return None
@@ -597,6 +602,8 @@ def _try_parse_as_ple_ventas(content: bytes) -> list[EmpresaRecord] | None:
             dtype=str,
             skip_blank_lines=True,
             on_bad_lines="skip",
+            # PLE pipe-delimited: " es literal (razón social), no entrecomillado.
+            quoting=csv.QUOTE_NONE,
         )
     except Exception:
         return None

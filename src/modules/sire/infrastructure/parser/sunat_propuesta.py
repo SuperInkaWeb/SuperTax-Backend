@@ -1,3 +1,4 @@
+import csv
 import io
 import re
 from dataclasses import dataclass
@@ -117,6 +118,9 @@ def parse_sunat_propuesta(txt_bytes: bytes, tipo_libro: str) -> list[SunatRecord
         sep="|", header=0, dtype=str, skip_blank_lines=True,
         on_bad_lines="skip", encoding=encoding, encoding_errors="replace",
         chunksize=1_000_000,
+        # Pipe-delimited: la " es literal (razón social), no entrecomillado; sin
+        # esto pandas descarta filas con " (comprobantes perdidos de la propuesta).
+        quoting=csv.QUOTE_NONE,
     )
     usecols = sorted(set(col_idx.values()))
     try:
