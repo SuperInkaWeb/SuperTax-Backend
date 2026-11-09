@@ -28,9 +28,31 @@ _ADMIN_ROLE_KEY = "admin_empresa"
 
 
 def _estudio_del_usuario(db: Session, user: User, admin_role_id: int) -> Estudio:
-    """Estudio propio del usuario; lo crea si no tiene y lo deja como admin del
-    estudio (así ve toda su cartera sin membresías por empresa)."""
+    """Estudio donde el usuario es ADMIN (dueño o co-admin): ahí va la empresa nueva.
+    Solo crea un estudio propio si no es admin de ninguno (usuario nuevo real).
+
+    Clave: un co-admin NO posee el estudio compartido (es miembro). Resolver solo
+    por `owner_user_id` le crearía un estudio aparte y su empresa no la verían los
+    demás admins; por eso también se busca por membresía de estudio admin.
+    """
+    # 1) El estudio que posee (si lo tiene), que es el preferido.
     estudio = db.scalar(select(Estudio).where(Estudio.owner_user_id == user.id))
+    # 2) Si no posee ninguno, uno donde sea admin activo (co-admin de un estudio ajeno).
+    if estudio is None:
+        estudio_id = db.scalar(
+            select(EstudioMember.estudio_id)
+            .join(Role, Role.id == EstudioMember.role_id)
+            .where(
+                EstudioMember.user_id == user.id,
+                EstudioMember.status == EstudioMemberStatus.activo,
+                Role.key == _ADMIN_ROLE_KEY,
+            )
+            .order_by(EstudioMember.estudio_id)
+            .limit(1)
+        )
+        if estudio_id is not None:
+            estudio = db.get(Estudio, estudio_id)
+    # 3) No es admin de ninguno → recién ahí crea su propio estudio.
     if estudio is None:
         estudio = Estudio(nombre=f"Estudio {user.nombre}", owner_user_id=user.id)
         db.add(estudio)

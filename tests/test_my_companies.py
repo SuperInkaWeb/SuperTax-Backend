@@ -112,6 +112,41 @@ def test_crear_mi_empresa_activa_todos_los_modulos(db_session):
     assert catalogo and activos == catalogo
 
 
+def test_coadmin_agrega_empresa_al_estudio_compartido(db_session):
+    """Un co-admin (no dueño) agrega una empresa: debe ir al estudio COMPARTIDO,
+    no crearle un estudio aparte (regresión: antes se resolvía solo por owner)."""
+    seed(db_session)
+    admin_role = db_session.scalar(select(Role).where(Role.key == "admin_empresa"))
+    dueno = User(email="dueno@e.pe", nombre="Dueño", auth0_sub="auth0|dueno")
+    coadmin = User(email="co@e.pe", nombre="Co", auth0_sub="auth0|co")
+    db_session.add_all([dueno, coadmin])
+    db_session.flush()
+    estudio = Estudio(nombre="Estudio Compartido", owner_user_id=dueno.id)
+    db_session.add(estudio)
+    db_session.flush()
+    db_session.add_all([
+        EstudioMember(estudio_id=estudio.id, user_id=dueno.id, role_id=admin_role.id),
+        EstudioMember(estudio_id=estudio.id, user_id=coadmin.id, role_id=admin_role.id),
+    ])
+    db_session.flush()
+
+    _override(db_session, coadmin)
+    try:
+        resp = TestClient(app).post(
+            "/api/my-companies", json={"ruc": "20555666777", "razon_social": "Nueva"}
+        )
+        assert resp.status_code == 201
+    finally:
+        app.dependency_overrides.clear()
+
+    company = db_session.scalar(select(Company).where(Company.ruc == "20555666777"))
+    assert company.estudio_id == estudio.id  # al estudio compartido, no a uno nuevo
+    # No se le creó un estudio propio al co-admin.
+    assert db_session.scalar(
+        select(Estudio).where(Estudio.owner_user_id == coadmin.id)
+    ) is None
+
+
 def test_crear_mi_empresa_ruc_duplicado_da_409(db_session):
     user = _user(db_session)
     db_session.add(Company(ruc="20555666777", razon_social="Ya existe"))
