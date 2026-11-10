@@ -19,6 +19,13 @@ _VALIDAR_URL = (
     "https://api.sunat.gob.pe/v1/contribuyente/contribuyentes/{ruc}/validarcomprobante"
 )
 
+# El WAF de SUNAT corta las peticiones sin User-Agent de navegador (lección de
+# consultacpe.py): se envía uno en todas las llamadas.
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
 # estadoCp → etiqueta (Anexo del manual).
 ESTADO_CP = {
     "0": "NO EXISTE",
@@ -44,7 +51,7 @@ def obtener_token(client_id: str, client_secret: str, timeout: int = 30) -> str 
         "client_secret": client_secret,
     }
     try:
-        resp = httpx.post(url, data=data, timeout=timeout)
+        resp = httpx.post(url, data=data, timeout=timeout, headers={"User-Agent": _UA})
     except httpx.HTTPError:
         return None
     if resp.status_code != 200:
@@ -81,7 +88,11 @@ def validar(
     }
     if monto is not None:
         body["monto"] = f"{monto:.2f}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "User-Agent": _UA,
+    }
     try:
         resp = httpx.post(
             _VALIDAR_URL.format(ruc=ruc_consultante), json=body, headers=headers, timeout=timeout

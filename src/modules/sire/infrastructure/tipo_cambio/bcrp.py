@@ -18,6 +18,16 @@ _SERIE_COMPRA = "PD04639PD"
 _SERIE_VENTA = "PD04640PD"
 _TIMEOUT_SEGUNDOS = 30
 
+# El WAF del BCRP corta las peticiones sin User-Agent de navegador (403 desde
+# datacenters), igual que SUNAT. Se envía un UA de navegador.
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+}
+
 # El BCRP abrevia los meses en español, con "Set" (no "Sep") para setiembre.
 _MESES = {
     "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
@@ -87,7 +97,7 @@ def obtener_cotizaciones(desde: date, hasta: date) -> list[CotizacionSbs]:
         f"{_BASE}/{_SERIE_COMPRA}-{_SERIE_VENTA}/json/"
         f"{desde.isoformat()}/{hasta.isoformat()}"
     )
-    with httpx.Client(timeout=_TIMEOUT_SEGUNDOS) as client:
+    with httpx.Client(timeout=_TIMEOUT_SEGUNDOS, headers=_HEADERS) as client:
         resp = client.get(url)
         resp.raise_for_status()
         return parse_respuesta(resp.json())
