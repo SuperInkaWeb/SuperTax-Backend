@@ -109,3 +109,16 @@ def test_hojas_excel_de_duplicidad_y_correlatividad_se_arman():
     assert dup.cell(row=2, column=6).value == "F001-00000010"
     corr = wb["Correlatividad mes anterior"]
     assert corr.cell(row=2, column=5).value == "11"  # número faltante
+
+
+def test_hoja_duplicidad_agrega_columna_rpta_sunat():
+    filas = parse_ple_ventas(_contenido(
+        _linea(tipo="01", serie="F001", numero="00000010"),
+        _linea(tipo="01", serie="F001", numero="00000010"),
+    ))
+    rpta = {("01", "F001", "00000010"): "ACEPTADO"}
+    wb = Workbook()
+    _agregar_hoja_duplicidad(wb, "Duplicidad en el periodo", filas, rpta)
+    ws = wb["Duplicidad en el periodo"]
+    assert ws.cell(row=1, column=12).value == "Rpta SUNAT"
+    assert ws.cell(row=2, column=12).value == "ACEPTADO"

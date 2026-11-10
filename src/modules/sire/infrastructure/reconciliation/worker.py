@@ -22,6 +22,7 @@ from src.modules.sire.infrastructure.reconciliation import cruce_periodos as cru
 from src.modules.sire.infrastructure.reconciliation.engine import reconcile
 from src.modules.sire.infrastructure.reconciliation.ple_ventas import parse_ple_ventas
 from src.modules.sire.infrastructure.reconciliation.tc_diferencias import comparar_tipo_cambio
+from src.modules.sire.infrastructure.sunat import validez as validez_sunat
 from src.modules.sire.infrastructure.report.excel_generator import (
     generate_excel, generate_csv_a, generate_csv_b, generate_csv_c, generate_csv_d,
     EXCEL_MAX_DATA_ROWS,
@@ -152,6 +153,24 @@ def procesar_conciliacion(payload: dict) -> dict:
         del filas_actual
     del contenido
 
+    # Validez SUNAT (Rpta SUNAT) de las filas de duplicidad (set acotado): 1 llamada
+    # por comprobante distinto. El token lo preparó el proceso principal.
+    rpta_validez: dict = {}
+    token_validez = payload.get("validez_token")
+    if token_validez and tipo_libro == "ventas":
+        distintas = {
+            (f.tipo, f.serie, f.numero): f
+            for f in (*duplicados_periodo, *duplicados_anterior)
+        }
+        for clave, f in distintas.items():
+            estado = validez_sunat.validar(
+                token_validez, ruc, ruc, f.tipo, f.serie, f.numero,
+                f.fecha_emi.strftime("%d/%m/%Y") if f.fecha_emi else "",
+                monto=float(f.total),
+            )
+            if estado:
+                rpta_validez[clave] = estado
+
     with open(payload["sunat_tmp_path"], "rb") as f:
         sunat_bytes = f.read()
     sunat_records = parse_sunat_propuesta(sunat_bytes, tipo_libro)
@@ -188,6 +207,7 @@ def procesar_conciliacion(payload: dict) -> dict:
         duplicados_periodo=duplicados_periodo,
         duplicados_anterior=duplicados_anterior,
         cortes_correlatividad=cortes_correlatividad,
+        rpta_validez=rpta_validez,
     )
     filename_xlsx = f"{ruc}_{periodo}_{tipo_libro}.xlsx"
     path_xlsx = f"reportes/{company_id}/{job_id}/{filename_xlsx}"

@@ -210,14 +210,18 @@ def _agregar_hoja_diferencias_tc(wb, diferencias) -> None:
                 celda.number_format = fmt
 
 
-def _agregar_hoja_duplicidad(wb, nombre: str, filas) -> None:
+def _agregar_hoja_duplicidad(wb, nombre: str, filas, rpta_validez=None) -> None:
     """Hoja de duplicidad (detalle por comprobante). Se usa tanto para la duplicidad
-    dentro del mes como para la duplicidad contra el mes anterior."""
+    dentro del mes como para la duplicidad contra el mes anterior. Si se pasa
+    `rpta_validez` ({(tipo,serie,numero): estado}) agrega la columna «Rpta SUNAT»."""
     ws = wb.create_sheet(nombre)
-    _set_header_row(ws, [
+    headers = [
         "#", "CUO", "Periodo", "Fecha Emisión", "Tipo Compr.", "Num Documento",
         "Razón Social", "V_IGV", "V_Total", "Moneda", "TC",
-    ])
+    ]
+    if rpta_validez is not None:
+        headers.append("Rpta SUNAT")
+    _set_header_row(ws, headers)
     for idx, f in enumerate(filas, 1):
         fila = idx + 1
         valores = [
@@ -227,9 +231,11 @@ def _agregar_hoja_duplicidad(wb, nombre: str, filas) -> None:
             float(f.igv), float(f.total), f.moneda,
             float(f.tc) if f.tc is not None else None,
         ]
+        if rpta_validez is not None:
+            valores.append(rpta_validez.get((f.tipo, f.serie, f.numero), ""))
         for col_idx, val in enumerate(valores, 1):
             ws.cell(row=fila, column=col_idx, value=val).border = THIN_BORDER
-    _finish_sheet(ws, 11, num_cols=[8, 9])
+    _finish_sheet(ws, len(headers), num_cols=[8, 9])
     for row in range(2, ws.max_row + 1):
         ws.cell(row=row, column=4).number_format = _FECHA_FMT
         celda_tc = ws.cell(row=row, column=11)
@@ -273,6 +279,7 @@ def generate_excel(
     duplicados_periodo: list | None = None,
     duplicados_anterior: list | None = None,
     cortes_correlatividad: list | None = None,
+    rpta_validez: dict | None = None,
 ) -> bytes:
     wb = Workbook()
 
@@ -774,10 +781,11 @@ def generate_excel(
         _agregar_hoja_diferencias_tc(wb, diferencias_tc)
 
     # Duplicidad y correlatividad entre periodos (solo ventas).
+    validez = rpta_validez if rpta_validez else None
     if not es_compras and duplicados_periodo:
-        _agregar_hoja_duplicidad(wb, "Duplicidad en el periodo", duplicados_periodo)
+        _agregar_hoja_duplicidad(wb, "Duplicidad en el periodo", duplicados_periodo, validez)
     if not es_compras and duplicados_anterior:
-        _agregar_hoja_duplicidad(wb, "Duplicidad mes anterior", duplicados_anterior)
+        _agregar_hoja_duplicidad(wb, "Duplicidad mes anterior", duplicados_anterior, validez)
     if not es_compras and cortes_correlatividad:
         _agregar_hoja_correlatividad_anterior(wb, cortes_correlatividad)
 
