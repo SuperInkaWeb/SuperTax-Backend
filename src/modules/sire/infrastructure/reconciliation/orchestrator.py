@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -166,6 +167,38 @@ def _descripcion_cobertura(fechas: list[str] | None) -> str | None:
     if len(fs) <= 6:
         return ", ".join(fmt(f) for f in fs)
     return f"{len(fs)} días entre el {fmt(fs[0])} y el {fmt(fs[-1])}"
+
+
+def _mensaje_error(exc: Exception) -> str:
+    """Traduce la excepción a un mensaje claro y accionable para el usuario, según
+    el tipo de fallo (un 'error inesperado' genérico no ayuda a resolverlo)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code == 401:
+            return (
+                "SUNAT rechazó las credenciales (401). Revisa las credenciales SIRE de "
+                "esta empresa (usuario y clave SOL, Client ID y Secret) y que el RUC esté "
+                "afiliado al SIRE."
+            )
+        if code == 403:
+            return (
+                "SUNAT bloqueó la solicitud (403). Reintenta en unos minutos; si persiste, "
+                "revisa las credenciales y los permisos SIRE del RUC."
+            )
+        if code == 429:
+            return (
+                "SUNAT está limitando las solicitudes de propuesta (429). Espera unos "
+                "minutos y vuelve a intentar."
+            )
+        return f"SUNAT respondió un error {code} al descargar la propuesta."
+    if isinstance(exc, httpx.TransportError):
+        return (
+            "No se pudo conectar con SUNAT (red o tiempo de espera). Reintenta en unos "
+            "minutos."
+        )
+    if isinstance(exc, (ValueError, TimeoutError)):
+        return str(exc)
+    return "Ocurrió un error inesperado al procesar la conciliación."
 
 
 def _creds_validez(creds, tipo_libro: TipoLibro) -> tuple[str | None, str | None]:
@@ -441,12 +474,7 @@ async def procesar_job(db: Session, job_id: int) -> None:
     except Exception as exc:  # se registra y se refleja como error en el job
         db.rollback()  # descarta cualquier transacción rota antes de reescribir el job
         logger.exception("Job de conciliación #%s falló", job_id)
-        mensaje = (
-            str(exc)
-            if isinstance(exc, (ValueError, TimeoutError))
-            else "Ocurrió un error inesperado al procesar la conciliación."
-        )
-        repo.mark_error(job_id, mensaje)
+        repo.mark_error(job_id, _mensaje_error(exc))
     finally:
         for ruta in (sunat_tmp_path, *sunat_extra_paths.values()):
             if ruta:
