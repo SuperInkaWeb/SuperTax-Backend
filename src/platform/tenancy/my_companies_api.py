@@ -20,7 +20,7 @@ from src.platform.tenancy.models import (
     EstudioMember,
     EstudioMemberStatus,
 )
-from src.platform.tenancy.service import estudio_admin_role_id
+from src.platform.tenancy.service import es_admin_de_estudio, estudio_admin_role_id
 from src.platform.users.models import User
 
 router = APIRouter(prefix="/api/my-companies", tags=["my-companies"])
@@ -97,6 +97,13 @@ def create_my_company(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MyCompanyResponse:
+    # Solo un admin de estudio gestiona tenencia: el staff acotado (operador/
+    # asistente/consulta) no agrega empresas.
+    if not es_admin_de_estudio(db, user.id):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Solo un administrador puede agregar empresas",
+        )
     if not payload.ruc.isdigit():
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="El RUC debe tener 11 dígitos numéricos"

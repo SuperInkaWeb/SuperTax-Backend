@@ -49,14 +49,11 @@ def _estudio_con_admin(db, email="owner@e.pe") -> tuple[User, Estudio, Company, 
     return owner, estudio, c1, c2
 
 
-# ─────────────────────── Crear estudio (usuario existente) ───────────────────────
-def test_crear_estudio_me_hace_admin(db_session):
-    """Un usuario existente abre un estudio nuevo y queda como su admin/dueño."""
-    seed(db_session)
-    user = User(email="solo@e.pe", nombre="Solo", auth0_sub="auth0|solo")
-    db_session.add(user)
-    db_session.flush()
-    _override(db_session, user)
+# ─────────────────────── Crear estudio (solo admins) ───────────────────────
+def test_admin_crea_otro_estudio(db_session):
+    """Un admin existente abre un estudio adicional y queda como su admin/dueño."""
+    owner, _estudio, _c1, _c2 = _estudio_con_admin(db_session, email="solo@e.pe")
+    _override(db_session, owner)
     try:
         client = TestClient(app)
         resp = client.post("/api/estudio", json={"nombre": "Mi Segundo Estudio"})
@@ -69,12 +66,26 @@ def test_crear_estudio_me_hace_admin(db_session):
     assert resp.json()["nombre"] == "Mi Segundo Estudio"
     assert nuevo_id in {e["id"] for e in estudios}  # ya lo administra
     creado = db_session.get(Estudio, nuevo_id)
-    assert creado.owner_user_id == user.id
+    assert creado.owner_user_id == owner.id
     assert db_session.scalar(
         select(EstudioMember).where(
-            EstudioMember.estudio_id == nuevo_id, EstudioMember.user_id == user.id
+            EstudioMember.estudio_id == nuevo_id, EstudioMember.user_id == owner.id
         )
     ) is not None
+
+
+def test_no_admin_no_puede_crear_estudio_da_403(db_session):
+    """El staff acotado (no admin de estudio) no crea estudios."""
+    seed(db_session)
+    user = User(email="op@e.pe", nombre="Operador", auth0_sub="auth0|op")
+    db_session.add(user)
+    db_session.flush()
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post("/api/estudio", json={"nombre": "Nuevo"})
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 403
 
 
 # ─────────────────────── Pieza 1: co-admins ───────────────────────

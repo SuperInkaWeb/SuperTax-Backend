@@ -23,7 +23,7 @@ from src.platform.tenancy.models import (
     EstudioMember,
     EstudioMemberStatus,
 )
-from src.platform.tenancy.service import ADMIN_ROLE_KEY
+from src.platform.tenancy.service import ADMIN_ROLE_KEY, es_admin_de_estudio
 from src.platform.users.models import User, UserStatus
 
 router = APIRouter(prefix="/api/estudio", tags=["estudio"])
@@ -148,7 +148,14 @@ def create_estudio(
 
     No crea cuenta: el usuario ya está autenticado. Es la vía para operar varias
     carteras separadas desde una sola cuenta (el estudio es la unidad de tenencia).
+    Solo para admins: el staff acotado no gestiona tenencia (su primer estudio nace
+    del registro/onboarding, no de aquí).
     """
+    if not es_admin_de_estudio(db, user.id):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Solo un administrador puede crear estudios",
+        )
     admin_role = db.scalar(select(Role).where(Role.key == ADMIN_ROLE_KEY))
     if admin_role is None:
         raise HTTPException(

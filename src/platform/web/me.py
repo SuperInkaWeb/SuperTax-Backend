@@ -64,13 +64,14 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) ->
     # Estudios para el selector de "estudio activo": donde eres admin (aunque aún
     # no tengan empresas) ∪ los estudios de tus empresas visibles. Así un estudio
     # recién creado también aparece y puede quedar activo.
-    estudio_ids = set(estudios_admin)
+    admin_ids = set(estudios_admin)
+    estudio_ids = set(admin_ids)
     estudio_ids.update(
         company.estudio_id for company, _ in rows if company.estudio_id is not None
     )
     estudios = (
         [
-            {"id": estudio.id, "nombre": estudio.nombre}
+            {"id": estudio.id, "nombre": estudio.nombre, "es_admin": estudio.id in admin_ids}
             for estudio in db.scalars(
                 select(Estudio).where(Estudio.id.in_(estudio_ids)).order_by(Estudio.nombre)
             ).all()

@@ -22,14 +22,38 @@ def _override(db, user):
 
 
 def _user(db) -> User:
+    """Un admin de estudio (dueño). Solo un admin puede agregar empresas."""
     seed(db)
+    admin_role = db.scalar(select(Role).where(Role.key == "admin_empresa"))
     user = User(email="c@estudio.pe", nombre="Contador", auth0_sub="auth0|c")
     db.add(user)
+    db.flush()
+    estudio = Estudio(nombre="Estudio Contador", owner_user_id=user.id)
+    db.add(estudio)
+    db.flush()
+    db.add(EstudioMember(estudio_id=estudio.id, user_id=user.id, role_id=admin_role.id))
     db.flush()
     return user
 
 
-def test_crear_mi_empresa_me_hace_admin(db_session):
+def test_no_admin_no_puede_agregar_empresa_da_403(db_session):
+    """El staff acotado (no admin de estudio) no agrega empresas."""
+    seed(db_session)
+    user = User(email="op@e.pe", nombre="Operador", auth0_sub="auth0|op")
+    db_session.add(user)
+    db_session.flush()
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/my-companies",
+            json={"ruc": "20555666777", "razon_social": "X"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 403
+
+
+def test_admin_agrega_empresa_a_su_estudio(db_session):
     user = _user(db_session)
     _override(db_session, user)
     try:

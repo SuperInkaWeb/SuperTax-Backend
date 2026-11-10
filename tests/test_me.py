@@ -104,5 +104,7 @@ def test_me_expone_estudios_y_estudio_id_por_empresa(db_session):
     finally:
         app.dependency_overrides.clear()
 
-    assert body["estudios"] == [{"id": estudio.id, "nombre": "Estudio Z"}]
+    assert body["estudios"] == [
+        {"id": estudio.id, "nombre": "Estudio Z", "es_admin": True}
+    ]
     assert body["companies"][0]["estudio_id"] == estudio.id

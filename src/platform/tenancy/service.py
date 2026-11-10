@@ -29,6 +29,22 @@ def get_active_membership(db: Session, user_id: int, company_id: int) -> Members
     )
 
 
+def es_admin_de_estudio(db: Session, user_id: int) -> bool:
+    """True si el usuario es admin activo de al menos un estudio. Gobierna quién
+    puede gestionar tenencia (crear estudios y agregar empresas): el staff acotado
+    (operador/asistente/consulta) no."""
+    return db.scalar(
+        select(EstudioMember.id)
+        .join(Role, Role.id == EstudioMember.role_id)
+        .where(
+            EstudioMember.user_id == user_id,
+            EstudioMember.status == EstudioMemberStatus.activo,
+            Role.key == ADMIN_ROLE_KEY,
+        )
+        .limit(1)
+    ) is not None
+
+
 def estudio_admin_role_id(db: Session, user_id: int, estudio_id: int | None) -> int | None:
     """Rol de admin si el usuario es admin activo del estudio dado; si no, None.
 
