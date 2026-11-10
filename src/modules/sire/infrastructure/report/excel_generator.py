@@ -210,6 +210,55 @@ def _agregar_hoja_diferencias_tc(wb, diferencias) -> None:
                 celda.number_format = fmt
 
 
+def _agregar_hoja_duplicidad(wb, nombre: str, filas) -> None:
+    """Hoja de duplicidad (detalle por comprobante). Se usa tanto para la duplicidad
+    dentro del mes como para la duplicidad contra el mes anterior."""
+    ws = wb.create_sheet(nombre)
+    _set_header_row(ws, [
+        "#", "CUO", "Periodo", "Fecha Emisión", "Tipo Compr.", "Num Documento",
+        "Razón Social", "V_IGV", "V_Total", "Moneda", "TC",
+    ])
+    for idx, f in enumerate(filas, 1):
+        fila = idx + 1
+        valores = [
+            idx, f.cuo, _fmt_periodo(f.periodo), f.fecha_emi,
+            f"{f.tipo} - {TIPO_LABELS.get(f.tipo, '')}".rstrip(" -"),
+            f"{f.serie}-{f.numero}", f.razon_social,
+            float(f.igv), float(f.total), f.moneda,
+            float(f.tc) if f.tc is not None else None,
+        ]
+        for col_idx, val in enumerate(valores, 1):
+            ws.cell(row=fila, column=col_idx, value=val).border = THIN_BORDER
+    _finish_sheet(ws, 11, num_cols=[8, 9])
+    for row in range(2, ws.max_row + 1):
+        ws.cell(row=row, column=4).number_format = _FECHA_FMT
+        celda_tc = ws.cell(row=row, column=11)
+        if celda_tc.value is not None:
+            celda_tc.number_format = _TC_FMT
+
+
+def _agregar_hoja_correlatividad_anterior(wb, cortes) -> None:
+    """Hoja «Correlatividad mes anterior»: series de boletas/NC cuyo primer número
+    del mes no continúa del último declarado el mes previo."""
+    ws = wb.create_sheet("Correlatividad mes anterior")
+    _set_header_row(ws, [
+        "Tipo", "Serie", "Último (mes anterior)", "Primero (mes actual)",
+        "Números faltantes", "Cantidad",
+    ])
+    for idx, c in enumerate(cortes, 1):
+        fila = idx + 1
+        valores = [
+            f"{c.tipo} - {TIPO_LABELS.get(c.tipo, '')}".rstrip(" -"),
+            c.serie, c.ultimo_anterior, c.primero_actual, c.faltantes, c.cantidad,
+        ]
+        for col_idx, val in enumerate(valores, 1):
+            celda = ws.cell(row=fila, column=col_idx, value=val)
+            celda.border = THIN_BORDER
+            if col_idx == 6:
+                celda.alignment = Alignment(horizontal="center")
+    _finish_sheet(ws, 6)
+
+
 def generate_excel(
     output: ReconciliationOutput,
     empresa_nombre: str,
@@ -221,6 +270,9 @@ def generate_excel(
     sin_sire: bool = False,
     meses_no_disponibles: list[str] | None = None,
     diferencias_tc: list | None = None,
+    duplicados_periodo: list | None = None,
+    duplicados_anterior: list | None = None,
+    cortes_correlatividad: list | None = None,
 ) -> bytes:
     wb = Workbook()
 
@@ -720,6 +772,14 @@ def generate_excel(
     # Diferencias de tipo de cambio (solo ventas): TC del PLE vs TC oficial.
     if not es_compras and diferencias_tc:
         _agregar_hoja_diferencias_tc(wb, diferencias_tc)
+
+    # Duplicidad y correlatividad entre periodos (solo ventas).
+    if not es_compras and duplicados_periodo:
+        _agregar_hoja_duplicidad(wb, "Duplicidad en el periodo", duplicados_periodo)
+    if not es_compras and duplicados_anterior:
+        _agregar_hoja_duplicidad(wb, "Duplicidad mes anterior", duplicados_anterior)
+    if not es_compras and cortes_correlatividad:
+        _agregar_hoja_correlatividad_anterior(wb, cortes_correlatividad)
 
     buf = io.BytesIO()
     wb.save(buf)

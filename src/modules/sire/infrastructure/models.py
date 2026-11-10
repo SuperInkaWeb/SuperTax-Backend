@@ -41,6 +41,10 @@ class ReconciliationJobModel(Base):
     )
     empresa_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     empresa_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # PLE del mes anterior (opcional, solo ventas): habilita la duplicidad y la
+    # correlatividad entre periodos (reqs 3/4). Se libera tras procesar, como el
+    # principal.
+    empresa_prev_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Compras: la empresa no está afiliada al SIRE (comprobantes rezagados en A).
     sin_sire: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Reutilizar una propuesta SUNAT fresca de otro job en vez de solicitar una nueva.

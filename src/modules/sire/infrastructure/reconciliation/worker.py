@@ -18,7 +18,9 @@ from src.modules.sire.infrastructure.parser.empresa_file import (
 )
 from src.modules.sire.infrastructure.parser.mapeo import parse_con_columnas, validar_mapeo
 from src.modules.sire.infrastructure.parser.sunat_propuesta import parse_sunat_propuesta
+from src.modules.sire.infrastructure.reconciliation import cruce_periodos as cruce
 from src.modules.sire.infrastructure.reconciliation.engine import reconcile
+from src.modules.sire.infrastructure.reconciliation.ple_ventas import parse_ple_ventas
 from src.modules.sire.infrastructure.reconciliation.tc_diferencias import comparar_tipo_cambio
 from src.modules.sire.infrastructure.report.excel_generator import (
     generate_excel, generate_csv_a, generate_csv_b, generate_csv_c, generate_csv_d,
@@ -128,6 +130,26 @@ def procesar_conciliacion(payload: dict) -> dict:
     diferencias_tc = comparar_tipo_cambio(
         contenido, tipo_libro, payload.get("tc_venta_por_fecha") or {}
     )
+
+    # Validaciones entre periodos (solo ventas): duplicidad dentro del mes y, si se
+    # subió el PLE del mes anterior, duplicidad y correlatividad contra él.
+    duplicados_periodo: list = []
+    duplicados_anterior: list = []
+    cortes_correlatividad: list = []
+    if tipo_libro == "ventas":
+        filas_actual = parse_ple_ventas(contenido)
+        if filas_actual:
+            duplicados_periodo = cruce.duplicados_en_periodo(filas_actual)
+            prev_path = payload.get("empresa_prev_file_path")
+            if prev_path:
+                filas_prev = parse_ple_ventas(storage.read(prev_path))
+                en_periodo = cruce.claves_duplicadas_en_periodo(filas_actual)
+                duplicados_anterior = cruce.duplicados_con_anterior(
+                    filas_actual, cruce.indice_claves(filas_prev), en_periodo
+                )
+                cortes_correlatividad = cruce.cortes_correlatividad(filas_actual, filas_prev)
+                del filas_prev
+        del filas_actual
     del contenido
 
     with open(payload["sunat_tmp_path"], "rb") as f:
@@ -163,6 +185,9 @@ def procesar_conciliacion(payload: dict) -> dict:
         sin_sire=bool(payload.get("sin_sire")),
         meses_no_disponibles=payload.get("sunat_extra_fallidos"),
         diferencias_tc=diferencias_tc,
+        duplicados_periodo=duplicados_periodo,
+        duplicados_anterior=duplicados_anterior,
+        cortes_correlatividad=cortes_correlatividad,
     )
     filename_xlsx = f"{ruc}_{periodo}_{tipo_libro}.xlsx"
     path_xlsx = f"reportes/{company_id}/{job_id}/{filename_xlsx}"
