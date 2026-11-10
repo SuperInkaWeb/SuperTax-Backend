@@ -41,6 +41,7 @@ from src.modules.sire.infrastructure.repositories import (
 from src.modules.sire.infrastructure.sunat import compras as sunat_compras
 from src.modules.sire.infrastructure.sunat import ventas as sunat_ventas
 from src.modules.sire.infrastructure.sunat.auth import get_sunat_token
+from src.modules.sire.infrastructure.tipo_cambio import sincronizador
 from src.platform.credentials import vault
 from src.platform.database.base import utcnow
 from src.platform.tenancy.models import Company
@@ -164,6 +165,21 @@ def _descripcion_cobertura(fechas: list[str] | None) -> str | None:
     if len(fs) <= 6:
         return ", ".join(fmt(f) for f in fs)
     return f"{len(fs)} días entre el {fmt(fs[0])} y el {fmt(fs[-1])}"
+
+
+def _preparar_tc_venta(db: Session, periodo: str, tipo_libro: TipoLibro) -> dict[str, str]:
+    """TC venta oficial del periodo (y meses atrás por NC/ND) para la hoja de
+    Diferencias TC. Solo ventas; una falla del BCRP no aborta la conciliación."""
+    if tipo_libro != TipoLibro.ventas:
+        return {}
+    try:
+        return sincronizador.preparar_para_periodo(db, periodo)
+    except Exception:  # el TC es un extra del reporte, no debe tumbar la conciliación
+        logger.warning(
+            "No se pudo preparar el TC de %s; se omite la hoja de diferencias",
+            periodo, exc_info=True,
+        )
+        return {}
 
 
 async def consultar_propuesta_disponible(
@@ -371,11 +387,15 @@ async def procesar_job(db: Session, job_id: int) -> None:
             if extra_tickets:
                 repo.set_extra_tickets(job_id, extra_tickets)
 
+        # TC oficial del periodo para la hoja de Diferencias TC (solo ventas).
+        tc_venta_por_fecha = _preparar_tc_venta(db, snap.periodo, tipo_libro)
+
         payload = {
             "empresa_file_path": snap.empresa_file_path,
             "empresa_filename": snap.empresa_filename,
             "sunat_tmp_path": sunat_tmp_path,
             "tipo_libro": tipo_libro.value,
+            "tc_venta_por_fecha": tc_venta_por_fecha,
             "mapeo_config": snap.mapeo_config,
             "saved_mapping": snap.saved_mapping,
             "cobertura_fechas": snap.cobertura_fechas,

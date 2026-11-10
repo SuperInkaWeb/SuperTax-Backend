@@ -19,6 +19,7 @@ from src.modules.sire.infrastructure.parser.empresa_file import (
 from src.modules.sire.infrastructure.parser.mapeo import parse_con_columnas, validar_mapeo
 from src.modules.sire.infrastructure.parser.sunat_propuesta import parse_sunat_propuesta
 from src.modules.sire.infrastructure.reconciliation.engine import reconcile
+from src.modules.sire.infrastructure.reconciliation.tc_diferencias import comparar_tipo_cambio
 from src.modules.sire.infrastructure.report.excel_generator import (
     generate_excel, generate_csv_a, generate_csv_b, generate_csv_c, generate_csv_d,
     EXCEL_MAX_DATA_ROWS,
@@ -121,6 +122,12 @@ def procesar_conciliacion(payload: dict) -> dict:
         contenido, payload["empresa_filename"], tipo_libro,
         payload["mapeo_config"], payload["saved_mapping"],
     )
+    # Diferencias de TC (solo ventas): compara el TC del PLE contra el oficial que
+    # el proceso principal ya resolvió en el payload. Se hace antes de liberar el
+    # contenido porque re-parsea sus columnas de forma aislada.
+    diferencias_tc = comparar_tipo_cambio(
+        contenido, tipo_libro, payload.get("tc_venta_por_fecha") or {}
+    )
     del contenido
 
     with open(payload["sunat_tmp_path"], "rb") as f:
@@ -155,6 +162,7 @@ def procesar_conciliacion(payload: dict) -> dict:
         cobertura=payload["cobertura_desc"],
         sin_sire=bool(payload.get("sin_sire")),
         meses_no_disponibles=payload.get("sunat_extra_fallidos"),
+        diferencias_tc=diferencias_tc,
     )
     filename_xlsx = f"{ruc}_{periodo}_{tipo_libro}.xlsx"
     path_xlsx = f"reportes/{company_id}/{job_id}/{filename_xlsx}"

@@ -164,6 +164,52 @@ def _agregar_hoja_observaciones(wb, correlatividad, duplicados) -> None:
     ws.column_dimensions["D"].width = 10
 
 
+_TC_FMT = "#,##0.000"
+_FECHA_FMT = "DD/MM/YYYY"
+
+
+def _agregar_hoja_diferencias_tc(wb, diferencias) -> None:
+    """Hoja «Diferencias TC»: comprobantes en moneda extranjera cuyo tipo de cambio
+    del PLE no coincide con el TC venta oficial de la fecha (para NC/ND, la fecha
+    del documento modificado). Muestra el TC de cada lado y la diferencia de IGV
+    que implica, con una fila de totales al final."""
+    ws = wb.create_sheet("Diferencias TC")
+    _set_header_row(ws, [
+        "#", "CUO", "Periodo", "Fecha Emisión", "Fecha Doc. Modificado",
+        "Tipo Compr.", "Num Documento", "Razón Social", "V_IGV", "V_Total",
+        "TC PLE", "TC SUNAT", "Dif IGV",
+    ])
+    total_igv = total_valor = total_dif = 0.0
+    for idx, d in enumerate(diferencias, 1):
+        fila = idx + 1
+        valores = [
+            idx, d.cuo, _fmt_periodo(d.periodo), d.fecha_emi, d.fecha_doc_mod,
+            d.tipo_label, d.num_documento, d.razon_social,
+            d.v_igv, d.v_total, d.tc_ple, d.tc_sunat, d.dif_igv,
+        ]
+        for col_idx, val in enumerate(valores, 1):
+            ws.cell(row=fila, column=col_idx, value=val).border = THIN_BORDER
+        ws.cell(row=fila, column=13).fill = DIFF_FILL  # resalta la diferencia de IGV
+        total_igv += d.v_igv
+        total_valor += d.v_total
+        total_dif += d.dif_igv
+
+    if diferencias:
+        fila_total = len(diferencias) + 2
+        ws.cell(row=fila_total, column=8, value="TOTAL").font = BOLD
+        for col_idx, val in ((9, total_igv), (10, total_valor), (13, total_dif)):
+            celda = ws.cell(row=fila_total, column=col_idx, value=round(val, 2))
+            celda.font = BOLD
+            celda.number_format = NUM_FMT
+
+    _finish_sheet(ws, 13, num_cols=[9, 10, 13])
+    for row in range(2, ws.max_row + 1):
+        for col, fmt in ((4, _FECHA_FMT), (5, _FECHA_FMT), (11, _TC_FMT), (12, _TC_FMT)):
+            celda = ws.cell(row=row, column=col)
+            if celda.value is not None:
+                celda.number_format = fmt
+
+
 def generate_excel(
     output: ReconciliationOutput,
     empresa_nombre: str,
@@ -174,6 +220,7 @@ def generate_excel(
     cobertura: str | None = None,
     sin_sire: bool = False,
     meses_no_disponibles: list[str] | None = None,
+    diferencias_tc: list | None = None,
 ) -> bytes:
     wb = Workbook()
 
@@ -669,6 +716,10 @@ def generate_excel(
     # Observaciones (solo ventas): correlatividad de NC y duplicados.
     if not es_compras and (output.correlatividad or output.duplicados):
         _agregar_hoja_observaciones(wb, output.correlatividad, output.duplicados)
+
+    # Diferencias de tipo de cambio (solo ventas): TC del PLE vs TC oficial.
+    if not es_compras and diferencias_tc:
+        _agregar_hoja_diferencias_tc(wb, diferencias_tc)
 
     buf = io.BytesIO()
     wb.save(buf)
