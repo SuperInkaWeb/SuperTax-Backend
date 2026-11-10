@@ -147,6 +147,69 @@ def test_coadmin_agrega_empresa_al_estudio_compartido(db_session):
     ) is None
 
 
+def test_crear_empresa_en_estudio_activo_indicado(db_session):
+    """Con estudio_id (estudio activo) la empresa va a ESE estudio que administro,
+    no al resuelto por defecto. Caso multi-estudio."""
+    seed(db_session)
+    admin_role = db_session.scalar(select(Role).where(Role.key == "admin_empresa"))
+    user = User(email="multi@e.pe", nombre="Multi", auth0_sub="auth0|multi")
+    db_session.add(user)
+    db_session.flush()
+    estudio_a = Estudio(nombre="Estudio A", owner_user_id=user.id)
+    estudio_b = Estudio(nombre="Estudio B", owner_user_id=user.id)
+    db_session.add_all([estudio_a, estudio_b])
+    db_session.flush()
+    db_session.add_all([
+        EstudioMember(estudio_id=estudio_a.id, user_id=user.id, role_id=admin_role.id),
+        EstudioMember(estudio_id=estudio_b.id, user_id=user.id, role_id=admin_role.id),
+    ])
+    db_session.flush()
+
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/my-companies",
+            json={
+                "ruc": "20555666777",
+                "razon_social": "Cliente B",
+                "estudio_id": estudio_b.id,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 201
+    company = db_session.scalar(select(Company).where(Company.ruc == "20555666777"))
+    assert company.estudio_id == estudio_b.id
+
+
+def test_crear_empresa_en_estudio_ajeno_da_403(db_session):
+    """No se puede inyectar una empresa en un estudio que no administro."""
+    seed(db_session)
+    admin_role = db_session.scalar(select(Role).where(Role.key == "admin_empresa"))
+    user = User(email="yo@e.pe", nombre="Yo", auth0_sub="auth0|yo")
+    otro = User(email="otro@e.pe", nombre="Otro", auth0_sub="auth0|otro")
+    db_session.add_all([user, otro])
+    db_session.flush()
+    ajeno = Estudio(nombre="Ajeno", owner_user_id=otro.id)
+    db_session.add(ajeno)
+    db_session.flush()
+    db_session.add(
+        EstudioMember(estudio_id=ajeno.id, user_id=otro.id, role_id=admin_role.id)
+    )
+    db_session.flush()
+
+    _override(db_session, user)
+    try:
+        resp = TestClient(app).post(
+            "/api/my-companies",
+            json={"ruc": "20555666777", "razon_social": "X", "estudio_id": ajeno.id},
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 403
+
+
 def test_crear_mi_empresa_ruc_duplicado_da_409(db_session):
     user = _user(db_session)
     db_session.add(Company(ruc="20555666777", razon_social="Ya existe"))

@@ -39,13 +39,17 @@ router = APIRouter(prefix="/api/team", tags=["team"])
 _MANAGE = "company.member.manage"
 
 
-def _empresas_administradas(db: Session, user: User) -> set[int]:
+def _empresas_administradas(
+    db: Session, user: User, estudio_id: int | None = None
+) -> set[int]:
     """IDs de empresas que el usuario administra: toda la cartera de los estudios
     donde es admin, más (compat) las empresas con membresía directa que le da
-    gestión de miembros."""
-    ids: set[int] = set()
+    gestión de miembros.
 
-    # 1) Admin de estudio → todas las empresas de esos estudios.
+    Con `estudio_id` se restringe a la cartera de ESE estudio (estudio activo del
+    frontend), validando que el usuario sea admin de él; así Equipo se ve separado
+    por estudio en vez de mezclar todas las carteras.
+    """
     estudios_admin = db.scalars(
         select(EstudioMember.estudio_id)
         .join(Role, Role.id == EstudioMember.role_id)
@@ -55,6 +59,21 @@ def _empresas_administradas(db: Session, user: User) -> set[int]:
             Role.key == ADMIN_ROLE_KEY,
         )
     ).all()
+
+    # Filtro por estudio activo: solo su cartera, y solo si lo administras.
+    if estudio_id is not None:
+        if estudio_id not in estudios_admin:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, detail="No administras ese estudio"
+            )
+        return set(
+            db.scalars(
+                select(Company.id).where(Company.estudio_id == estudio_id)
+            ).all()
+        )
+
+    ids: set[int] = set()
+    # 1) Admin de estudio → todas las empresas de esos estudios.
     if estudios_admin:
         ids.update(
             db.scalars(
@@ -129,9 +148,11 @@ class MembershipStatusInput(BaseModel):
 
 @router.get("/companies", response_model=list[TeamCompany])
 def list_admin_companies(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    estudio_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> list[TeamCompany]:
-    ids = _empresas_administradas(db, user)
+    ids = _empresas_administradas(db, user, estudio_id)
     if not ids:
         return []
     companies = db.scalars(
@@ -142,9 +163,11 @@ def list_admin_companies(
 
 @router.get("/members", response_model=list[TeamMember])
 def list_team_members(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    estudio_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> list[TeamMember]:
-    ids = _empresas_administradas(db, user)
+    ids = _empresas_administradas(db, user, estudio_id)
     if not ids:
         return []
     memberships = db.scalars(select(Membership).where(Membership.company_id.in_(ids))).all()

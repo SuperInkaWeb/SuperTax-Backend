@@ -57,6 +57,54 @@ def test_team_companies_incluye_toda_la_cartera_del_estudio(db_session):
     assert {c["ruc"] for c in resp.json()} == {"20111111111", "20222222222"}
 
 
+def test_team_companies_filtra_por_estudio_activo(db_session):
+    """Admin de 2 estudios: con ?estudio_id ve solo la cartera de ese estudio;
+    sin él, la de todos (comportamiento actual)."""
+    owner, _estudio_a, _c1, _c2 = _estudio_admin(db_session)
+    admin_role = db_session.scalar(select(Role).where(Role.key == "admin_empresa"))
+    estudio_b = Estudio(nombre="Estudio B", owner_user_id=owner.id)
+    db_session.add(estudio_b)
+    db_session.flush()
+    db_session.add(
+        Company(ruc="20333333333", razon_social="Cliente B", estudio_id=estudio_b.id)
+    )
+    db_session.add(
+        EstudioMember(estudio_id=estudio_b.id, user_id=owner.id, role_id=admin_role.id)
+    )
+    db_session.flush()
+
+    _override(db_session, owner)
+    try:
+        client = TestClient(app)
+        todas = client.get("/api/team/companies").json()
+        solo_b = client.get(
+            "/api/team/companies", params={"estudio_id": estudio_b.id}
+        ).json()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert {c["ruc"] for c in todas} == {"20111111111", "20222222222", "20333333333"}
+    assert {c["ruc"] for c in solo_b} == {"20333333333"}
+
+
+def test_team_companies_estudio_ajeno_da_403(db_session):
+    owner, *_ = _estudio_admin(db_session)
+    otro = User(email="otro@e.pe", nombre="Otro", auth0_sub="auth0|otro2")
+    db_session.add(otro)
+    db_session.flush()
+    ajeno = Estudio(nombre="Ajeno", owner_user_id=otro.id)
+    db_session.add(ajeno)
+    db_session.flush()
+    _override(db_session, owner)
+    try:
+        resp = TestClient(app).get(
+            "/api/team/companies", params={"estudio_id": ajeno.id}
+        )
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 403
+
+
 def test_assign_da_acceso_solo_a_los_clientes_elegidos(db_session, monkeypatch):
     _mock_auth0(monkeypatch)
     owner, _estudio, c1, _c2 = _estudio_admin(db_session)

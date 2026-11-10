@@ -14,6 +14,7 @@ from src.platform.database.session import get_db
 from src.platform.identity.current_user import get_current_user
 from src.platform.tenancy.models import (
     Company,
+    Estudio,
     EstudioMember,
     EstudioMemberStatus,
     Membership,
@@ -59,17 +60,38 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)) ->
 
     rows = list(visibles.values())
     modulos = active_module_keys(db, [company.id for company, _ in rows])
+
+    # Estudios para el selector de "estudio activo": donde eres admin (aunque aún
+    # no tengan empresas) ∪ los estudios de tus empresas visibles. Así un estudio
+    # recién creado también aparece y puede quedar activo.
+    estudio_ids = set(estudios_admin)
+    estudio_ids.update(
+        company.estudio_id for company, _ in rows if company.estudio_id is not None
+    )
+    estudios = (
+        [
+            {"id": estudio.id, "nombre": estudio.nombre}
+            for estudio in db.scalars(
+                select(Estudio).where(Estudio.id.in_(estudio_ids)).order_by(Estudio.nombre)
+            ).all()
+        ]
+        if estudio_ids
+        else []
+    )
+
     return {
         "id": user.id,
         "email": user.email,
         "nombre": user.nombre,
         "is_platform_admin": user.is_platform_admin,
+        "estudios": estudios,
         "companies": [
             {
                 "id": company.id,
                 "ruc": company.ruc,
                 "razon_social": company.razon_social,
                 "role_key": role_key,
+                "estudio_id": company.estudio_id,
                 "modules": modulos.get(company.id, []),
             }
             for company, role_key in rows

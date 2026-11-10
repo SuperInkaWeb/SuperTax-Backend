@@ -49,6 +49,34 @@ def _estudio_con_admin(db, email="owner@e.pe") -> tuple[User, Estudio, Company, 
     return owner, estudio, c1, c2
 
 
+# ─────────────────────── Crear estudio (usuario existente) ───────────────────────
+def test_crear_estudio_me_hace_admin(db_session):
+    """Un usuario existente abre un estudio nuevo y queda como su admin/dueño."""
+    seed(db_session)
+    user = User(email="solo@e.pe", nombre="Solo", auth0_sub="auth0|solo")
+    db_session.add(user)
+    db_session.flush()
+    _override(db_session, user)
+    try:
+        client = TestClient(app)
+        resp = client.post("/api/estudio", json={"nombre": "Mi Segundo Estudio"})
+        assert resp.status_code == 201, resp.text
+        nuevo_id = resp.json()["id"]
+        estudios = client.get("/api/estudio").json()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.json()["nombre"] == "Mi Segundo Estudio"
+    assert nuevo_id in {e["id"] for e in estudios}  # ya lo administra
+    creado = db_session.get(Estudio, nuevo_id)
+    assert creado.owner_user_id == user.id
+    assert db_session.scalar(
+        select(EstudioMember).where(
+            EstudioMember.estudio_id == nuevo_id, EstudioMember.user_id == user.id
+        )
+    ) is not None
+
+
 # ─────────────────────── Pieza 1: co-admins ───────────────────────
 def test_invitar_coadmin_le_da_toda_la_cartera(db_session, monkeypatch):
     _mock_auth0(monkeypatch)

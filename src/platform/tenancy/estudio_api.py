@@ -43,6 +43,15 @@ class EstudioItem(BaseModel):
     members: list[EstudioMemberItem]
 
 
+class EstudioCreateInput(BaseModel):
+    nombre: str = Field(min_length=1, max_length=200)
+
+
+class EstudioCreated(BaseModel):
+    id: int
+    nombre: str
+
+
 class AdminInvite(BaseModel):
     email: EmailStr
     nombre: str = Field(min_length=1, max_length=150)
@@ -127,6 +136,33 @@ def list_mis_estudios(
         EstudioItem(id=e.id, nombre=e.nombre, members=_miembros(db, e.id))
         for e in _estudios_admin(db, user)
     ]
+
+
+@router.post("", response_model=EstudioCreated, status_code=status.HTTP_201_CREATED)
+def create_estudio(
+    payload: EstudioCreateInput,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EstudioCreated:
+    """Un usuario existente abre un estudio nuevo y queda como su admin (dueño).
+
+    No crea cuenta: el usuario ya está autenticado. Es la vía para operar varias
+    carteras separadas desde una sola cuenta (el estudio es la unidad de tenencia).
+    """
+    admin_role = db.scalar(select(Role).where(Role.key == ADMIN_ROLE_KEY))
+    if admin_role is None:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Falta el rol 'admin_empresa' (ejecuta el seed)",
+        )
+    estudio = Estudio(nombre=payload.nombre.strip(), owner_user_id=user.id)
+    db.add(estudio)
+    db.flush()
+    db.add(
+        EstudioMember(estudio_id=estudio.id, user_id=user.id, role_id=admin_role.id)
+    )
+    db.commit()
+    return EstudioCreated(id=estudio.id, nombre=estudio.nombre)
 
 
 @router.get("/all", response_model=list[EstudioAllItem])

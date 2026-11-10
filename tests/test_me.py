@@ -77,3 +77,32 @@ def test_me_admin_de_estudio_ve_todas_las_empresas_del_estudio(db_session):
     companies = resp.json()["companies"]
     assert {c["ruc"] for c in companies} == {"20111111111", "20222222222"}
     assert all(c["role_key"] == "admin_empresa" for c in companies)
+
+
+def test_me_expone_estudios_y_estudio_id_por_empresa(db_session):
+    """El frontend necesita la lista de estudios (selector de estudio activo) y el
+    estudio_id de cada empresa para agruparlas por estudio."""
+    admin_role = Role(key="admin_empresa", nombre="Admin Empresa")
+    owner = User(email="duena@e.pe", nombre="Dueña", auth0_sub="auth0|duena")
+    db_session.add_all([admin_role, owner])
+    db_session.flush()
+    estudio = Estudio(nombre="Estudio Z", owner_user_id=owner.id)
+    db_session.add(estudio)
+    db_session.flush()
+    db_session.add(
+        Company(ruc="20333333333", razon_social="Cliente", estudio_id=estudio.id)
+    )
+    db_session.add(
+        EstudioMember(estudio_id=estudio.id, user_id=owner.id, role_id=admin_role.id)
+    )
+    db_session.flush()
+
+    app.dependency_overrides[get_current_user] = lambda: owner
+    app.dependency_overrides[get_db] = lambda: db_session
+    try:
+        body = TestClient(app).get("/me").json()
+    finally:
+        app.dependency_overrides.clear()
+
+    assert body["estudios"] == [{"id": estudio.id, "nombre": "Estudio Z"}]
+    assert body["companies"][0]["estudio_id"] == estudio.id

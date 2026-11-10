@@ -20,6 +20,7 @@ from src.platform.tenancy.models import (
     EstudioMember,
     EstudioMemberStatus,
 )
+from src.platform.tenancy.service import estudio_admin_role_id
 from src.platform.users.models import User
 
 router = APIRouter(prefix="/api/my-companies", tags=["my-companies"])
@@ -77,6 +78,9 @@ def _estudio_del_usuario(db: Session, user: User, admin_role_id: int) -> Estudio
 class MyCompanyInput(BaseModel):
     ruc: str = Field(min_length=11, max_length=11)
     razon_social: str = Field(min_length=1, max_length=200)
+    # Estudio destino (estudio activo del frontend). Si no se indica, se resuelve
+    # el estudio del usuario (dueño o co-admin). Permite el caso multi-estudio.
+    estudio_id: int | None = None
 
 
 class MyCompanyResponse(BaseModel):
@@ -109,7 +113,15 @@ def create_my_company(
             detail="Falta el rol base 'admin_empresa' (ejecuta el seed)",
         )
 
-    estudio = _estudio_del_usuario(db, user, admin_role.id)
+    if payload.estudio_id is not None:
+        # Alta explícita en un estudio concreto: solo si eres admin activo de él.
+        if estudio_admin_role_id(db, user.id, payload.estudio_id) is None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, detail="No administras ese estudio"
+            )
+        estudio = db.get(Estudio, payload.estudio_id)
+    else:
+        estudio = _estudio_del_usuario(db, user, admin_role.id)
     company = Company(
         ruc=payload.ruc, razon_social=payload.razon_social, estudio_id=estudio.id
     )
