@@ -8,8 +8,10 @@ separado en cada módulo. Vive en `platform` porque la comparten los módulos y 
 núcleo no puede depender de ellos (los módulos sí dependen del núcleo).
 
 Clases de credencial (`kind`):
-  - KIND_SOL      → usuario + clave SOL (login SUNAT y autenticación API SIRE).
-  - KIND_SIRE_API → client_id + client_secret del cliente OAuth de SUNAT (solo SIRE).
+  - KIND_SOL        → usuario + clave SOL (login SUNAT y autenticación API SIRE).
+  - KIND_SIRE_API   → client_id + client_secret del cliente OAuth de SUNAT (solo SIRE).
+  - KIND_VALIDEZ_API → client_id + client_secret de la app "Consulta de Validez" del
+    Menú SOL (otra app distinta a la del SIRE), para la validez de comprobantes.
 
 El `identifier` (usuario SOL / client_id) no es secreto y se guarda en claro para
 prellenar formularios; el `secret` (clave SOL / client_secret) se cifra con Fernet
@@ -26,6 +28,7 @@ from src.platform.security import decrypt_field, encrypt_field
 
 KIND_SOL = "sol"
 KIND_SIRE_API = "sire_api"
+KIND_VALIDEZ_API = "validez_api"
 
 
 @dataclass(frozen=True)

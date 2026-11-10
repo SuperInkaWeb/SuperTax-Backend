@@ -81,3 +81,30 @@ def _estado_legacy(db: Session, company_id: int) -> CredentialsStatus:
         client_id=creds.client_id,
         updated_at=creds.updated_at,
     )
+
+
+@dataclass
+class ValidezStatus:
+    configured: bool
+    client_id: str | None = None
+    updated_at: datetime | None = None
+
+
+def set_validez_credentials(
+    db: Session, company_id: int, user_id: int, client_id: str, client_secret: str
+) -> None:
+    """Credenciales de la app 'Consulta de Validez' del Menú SOL (otra app, distinta
+    a la del SIRE). Se usan para la columna Rpta SUNAT. Secreto vacío = conservar."""
+    if not client_secret and not vault.has_secret(db, company_id, vault.KIND_VALIDEZ_API):
+        raise ValueError("El client secret de validez es obligatorio")
+    vault.write(
+        db, company_id, vault.KIND_VALIDEZ_API,
+        identifier=client_id, secret=client_secret, user_id=user_id,
+    )
+
+
+def get_validez_status(db: Session, company_id: int) -> ValidezStatus:
+    cred = vault.get(db, company_id, vault.KIND_VALIDEZ_API)
+    if cred is None:
+        return ValidezStatus(configured=False)
+    return ValidezStatus(configured=True, client_id=cred.identifier, updated_at=cred.updated_at)

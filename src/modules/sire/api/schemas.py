@@ -51,6 +51,20 @@ class CredentialsStatusResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class ValidezCredentialsInput(BaseModel):
+    client_id: str = Field(min_length=1, max_length=100)
+    # Secreto vacío = conservar el guardado (editar solo el client_id).
+    client_secret: str = ""
+
+
+class ValidezCredentialsStatusResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    configured: bool
+    client_id: str | None = None
+    updated_at: datetime | None = None
+
+
 class TipoCambioItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

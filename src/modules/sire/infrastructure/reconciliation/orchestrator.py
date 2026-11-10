@@ -45,7 +45,6 @@ from src.modules.sire.infrastructure.sunat.auth import get_sunat_token
 from src.modules.sire.infrastructure.tipo_cambio import sincronizador
 from src.platform.credentials import vault
 from src.platform.database.base import utcnow
-from src.platform.security import decrypt_field
 from src.platform.tenancy.models import Company
 
 logger = logging.getLogger("sire.orchestrator")
@@ -201,14 +200,19 @@ def _mensaje_error(exc: Exception) -> str:
     return "Ocurrió un error inesperado al procesar la conciliación."
 
 
-def _creds_validez(creds, tipo_libro: TipoLibro) -> tuple[str | None, str | None]:
-    """client_id/secret de API del SIRE para la consulta de validez (Rpta SUNAT).
-    El subproceso obtiene y refresca el token por su cuenta. Solo ventas; si no se
-    pueden descifrar, el reporte va sin validez (no rompe la conciliación)."""
+def _creds_validez(
+    db: Session, company_id: int, tipo_libro: TipoLibro
+) -> tuple[str | None, str | None]:
+    """client_id/secret de la app 'Consulta de Validez' (bóveda, kind validez_api),
+    para la columna Rpta SUNAT. El subproceso obtiene y refresca el token por su
+    cuenta. Solo ventas; si no están cargadas, el reporte va sin validez."""
     if tipo_libro != TipoLibro.ventas:
         return None, None
+    cred = vault.get(db, company_id, vault.KIND_VALIDEZ_API)
+    if cred is None:
+        return None, None
     try:
-        return creds.client_id, decrypt_field(creds.client_secret_enc)
+        return cred.identifier, cred.secret
     except Exception:  # la validez es un extra; nunca debe tumbar la conciliación
         logger.warning(
             "No se pudieron leer las credenciales de validez; se omite Rpta SUNAT",
@@ -441,8 +445,10 @@ async def procesar_job(db: Session, job_id: int) -> None:
 
         # TC oficial del periodo para la hoja de Diferencias TC (solo ventas).
         tc_venta_por_fecha = _preparar_tc_venta(db, snap.periodo, tipo_libro)
-        # Credenciales para la validez de comprobantes (Rpta SUNAT), reusando SIRE.
-        validez_client_id, validez_client_secret = _creds_validez(creds, tipo_libro)
+        # Credenciales de la app de validez (Rpta SUNAT), desde la bóveda.
+        validez_client_id, validez_client_secret = _creds_validez(
+            db, snap.company_id, tipo_libro
+        )
 
         payload = {
             "empresa_file_path": snap.empresa_file_path,

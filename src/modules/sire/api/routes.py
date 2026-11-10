@@ -28,11 +28,15 @@ from src.modules.sire.api.schemas import (
     TipoCambioEdit,
     TipoCambioItem,
     TipoCambioRefrescar,
+    ValidezCredentialsInput,
+    ValidezCredentialsStatusResponse,
 )
 from src.modules.sire.application import file_mapping
 from src.modules.sire.application.credentials import (
     get_credentials_status,
+    get_validez_status,
     set_credentials,
+    set_validez_credentials,
 )
 from src.modules.sire.application.use_cases import (
     create_reconciliation_job,
@@ -291,6 +295,40 @@ def upsert_credentials(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return CredentialsStatusResponse.model_validate(
         get_credentials_status(db, ctx.company.id)
+    )
+
+
+# ─────────────────────── Credenciales de validez (Rpta SUNAT) ───────────────────────
+@router.get("/validez-credentials", response_model=ValidezCredentialsStatusResponse)
+def validez_credentials_status(
+    ctx: ActiveContext = Depends(require_permission("sire.credentials.manage")),
+    db: Session = Depends(get_db),
+) -> ValidezCredentialsStatusResponse:
+    return ValidezCredentialsStatusResponse.model_validate(
+        get_validez_status(db, ctx.company.id)
+    )
+
+
+@router.put("/validez-credentials", response_model=ValidezCredentialsStatusResponse)
+def upsert_validez_credentials(
+    payload: ValidezCredentialsInput,
+    ctx: ActiveContext = Depends(require_permission("sire.credentials.manage")),
+    db: Session = Depends(get_db),
+) -> ValidezCredentialsStatusResponse:
+    """Credenciales de la app 'Consulta de Validez' del Menú SOL (otra app, distinta
+    a la del SIRE), para la columna Rpta SUNAT."""
+    try:
+        set_validez_credentials(
+            db,
+            company_id=ctx.company.id,
+            user_id=ctx.user.id,
+            client_id=payload.client_id,
+            client_secret=payload.client_secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ValidezCredentialsStatusResponse.model_validate(
+        get_validez_status(db, ctx.company.id)
     )
 
 
