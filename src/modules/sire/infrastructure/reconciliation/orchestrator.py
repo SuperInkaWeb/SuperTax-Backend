@@ -39,7 +39,6 @@ from src.modules.sire.infrastructure.repositories import (
     SqlReconciliationRepository,
 )
 from src.modules.sire.infrastructure.sunat import compras as sunat_compras
-from src.modules.sire.infrastructure.sunat import validez
 from src.modules.sire.infrastructure.sunat import ventas as sunat_ventas
 from src.modules.sire.infrastructure.sunat.auth import get_sunat_token
 from src.modules.sire.infrastructure.tipo_cambio import sincronizador
@@ -169,17 +168,20 @@ def _descripcion_cobertura(fechas: list[str] | None) -> str | None:
     return f"{len(fs)} días entre el {fmt(fs[0])} y el {fmt(fs[-1])}"
 
 
-def _preparar_token_validez(creds, tipo_libro: TipoLibro) -> str | None:
-    """Token para la consulta de validez (Rpta SUNAT), reusando el client_id/secret
-    de API del SIRE (flujo client_credentials). Solo ventas; None si SUNAT no acepta
-    esas credenciales para el scope de validez — entonces el reporte va sin validez."""
+def _creds_validez(creds, tipo_libro: TipoLibro) -> tuple[str | None, str | None]:
+    """client_id/secret de API del SIRE para la consulta de validez (Rpta SUNAT).
+    El subproceso obtiene y refresca el token por su cuenta. Solo ventas; si no se
+    pueden descifrar, el reporte va sin validez (no rompe la conciliación)."""
     if tipo_libro != TipoLibro.ventas:
-        return None
+        return None, None
     try:
-        return validez.obtener_token(creds.client_id, decrypt_field(creds.client_secret_enc))
+        return creds.client_id, decrypt_field(creds.client_secret_enc)
     except Exception:  # la validez es un extra; nunca debe tumbar la conciliación
-        logger.warning("No se pudo obtener el token de validez; se omite Rpta SUNAT", exc_info=True)
-        return None
+        logger.warning(
+            "No se pudieron leer las credenciales de validez; se omite Rpta SUNAT",
+            exc_info=True,
+        )
+        return None, None
 
 
 def _preparar_tc_venta(db: Session, periodo: str, tipo_libro: TipoLibro) -> dict[str, str]:
@@ -406,8 +408,8 @@ async def procesar_job(db: Session, job_id: int) -> None:
 
         # TC oficial del periodo para la hoja de Diferencias TC (solo ventas).
         tc_venta_por_fecha = _preparar_tc_venta(db, snap.periodo, tipo_libro)
-        # Token para la validez de comprobantes (Rpta SUNAT), reusando creds SIRE.
-        validez_token = _preparar_token_validez(creds, tipo_libro)
+        # Credenciales para la validez de comprobantes (Rpta SUNAT), reusando SIRE.
+        validez_client_id, validez_client_secret = _creds_validez(creds, tipo_libro)
 
         payload = {
             "empresa_file_path": snap.empresa_file_path,
@@ -416,7 +418,8 @@ async def procesar_job(db: Session, job_id: int) -> None:
             "sunat_tmp_path": sunat_tmp_path,
             "tipo_libro": tipo_libro.value,
             "tc_venta_por_fecha": tc_venta_por_fecha,
-            "validez_token": validez_token,
+            "validez_client_id": validez_client_id,
+            "validez_client_secret": validez_client_secret,
             "mapeo_config": snap.mapeo_config,
             "saved_mapping": snap.saved_mapping,
             "cobertura_fechas": snap.cobertura_fechas,

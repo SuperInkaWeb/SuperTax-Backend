@@ -497,25 +497,31 @@ def generate_excel(
         (rec.status_description or "").strip() for rec in output.scenario_a
     )
 
+    # Columna «Rpta SUNAT» (validez) solo en ventas y si se calculó.
+    rpta_a = rpta_validez if (rpta_validez and not es_compras) else None
+
     ws_a = wb.create_sheet("A - Solo en tu archivo")
     if es_compras:
-        _set_header_row(ws_a, [
+        headers_a = [
             "Tipo", "Serie", "Número", "Fecha emisión", "RUC Proveedor", "Proveedor",
             "Base imponible", "IGV", "Importe total", "Alerta",
-        ])
+        ]
         col_alerta_a = 10
     elif hay_estado:
-        _set_header_row(ws_a, [
+        headers_a = [
             "Tipo", "Serie", "Número", "Fecha emisión",
             "Base imponible", "IGV", "Importe total", "Estado (tu archivo)", "Alerta",
-        ])
+        ]
         col_alerta_a = 9
     else:
-        _set_header_row(ws_a, [
+        headers_a = [
             "Tipo", "Serie", "Número", "Fecha emisión",
             "Base imponible", "IGV", "Importe total", "Alerta",
-        ])
+        ]
         col_alerta_a = 8
+    if rpta_a is not None:
+        headers_a = [*headers_a, "Rpta SUNAT"]
+    _set_header_row(ws_a, headers_a)
     use_fmt_a = cnt_a <= EXCEL_FORMAT_LIMIT
     for row_idx, rec in enumerate(output.scenario_a[:EXCEL_MAX_DATA_ROWS], 2):
         if es_compras:
@@ -538,6 +544,8 @@ def generate_excel(
                 rec.base_imponible, rec.igv, rec.importe_total,
                 "ROJO" if rec.es_alerta_roja else "ÁMBAR",
             ]
+        if rpta_a is not None:
+            values = [*values, rpta_a.get((rec.tipo_cdp, rec.serie, rec.numero), "")]
         for col_idx, val in enumerate(values, 1):
             cell = ws_a.cell(row=row_idx, column=col_idx, value=val)
             if use_fmt_a:
@@ -547,7 +555,8 @@ def generate_excel(
                 elif col_idx == col_alerta_a:
                     _alert_style(cell, rec.es_alerta_roja)
                     cell.alignment = Alignment(horizontal="center")
-    _finish_sheet(ws_a, col_alerta_a, num_cols=[7, 8, 9] if es_compras else [5, 6, 7])
+    n_cols_a = col_alerta_a + (1 if rpta_a is not None else 0)
+    _finish_sheet(ws_a, n_cols_a, num_cols=[7, 8, 9] if es_compras else [5, 6, 7])
 
     ws_b = wb.create_sheet("B - Solo en SUNAT")
     if es_compras:

@@ -29,6 +29,10 @@ ESTADO_CP = {
 }
 
 
+class TokenExpirado(Exception):
+    """El token de validez expiró (401): el llamador debe pedir uno nuevo y reintentar."""
+
+
 def obtener_token(client_id: str, client_secret: str, timeout: int = 30) -> str | None:
     """Token OAuth client_credentials para el scope de validez. None si SUNAT lo
     rechaza (p. ej. las credenciales no están habilitadas para este servicio)."""
@@ -84,6 +88,8 @@ def validar(
         )
     except httpx.HTTPError:
         return None
+    if resp.status_code == 401:
+        raise TokenExpirado()
     if resp.status_code != 200:
         return None
     data = resp.json().get("data") or {}

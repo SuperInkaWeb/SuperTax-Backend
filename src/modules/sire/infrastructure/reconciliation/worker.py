@@ -12,6 +12,7 @@ que el proceso principal guarda en la BD.
 """
 
 import io
+import re
 
 from src.modules.sire.infrastructure.parser.empresa_file import (
     parse_empresa_file, normalizar_content, KNOWN_FORMAT_COLUMNS_HELP, PLE81_FORMAT_HELP,
@@ -109,6 +110,74 @@ def extraer_periodos_emision(payload: dict) -> list[str]:
     return sorted(meses)
 
 
+# Techo de seguridad del escenario A: valida "todo", pero evita que un A patológico
+# (decenas de miles) cuelgue el job horas en llamadas secuenciales a SUNAT.
+_TOPE_VALIDEZ = 5000
+
+
+def _fecha_ddmmyyyy(valor: str) -> str:
+    """Normaliza la fecha a dd/mm/aaaa (acepta ya dd/mm/aaaa o ISO aaaa-mm-dd)."""
+    v = (valor or "").strip()
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", v):
+        return v
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", v)
+    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else v
+
+
+def _consultar_validez(client_id: str, client_secret: str, ruc: str, items: list) -> dict:
+    """Consulta la validez de cada comprobante (items: (clave,tipo,serie,numero,
+    fecha,monto)). Refresca el token al expirar y tolera fallos por comprobante."""
+    token = validez_sunat.obtener_token(client_id, client_secret)
+    if not token:
+        return {}  # SUNAT no acepta las credenciales para el scope de validez
+    out: dict = {}
+    for clave, tipo, serie, numero, fecha, monto in items:
+        try:
+            estado = validez_sunat.validar(token, ruc, ruc, tipo, serie, numero, fecha, monto)
+        except validez_sunat.TokenExpirado:
+            token = validez_sunat.obtener_token(client_id, client_secret)
+            if not token:
+                break
+            try:
+                estado = validez_sunat.validar(token, ruc, ruc, tipo, serie, numero, fecha, monto)
+            except validez_sunat.TokenExpirado:
+                estado = None
+        if estado:
+            out[clave] = estado
+    return out
+
+
+def _validar_rpta_sunat(payload, tipo_libro, ruc, dup_periodo, dup_anterior, recon_output) -> dict:
+    """Arma el set de comprobantes a validar (duplicidad + TODO el escenario A con
+    techo) y devuelve {(tipo,serie,numero): estado}. Vacío si no es ventas o faltan
+    credenciales."""
+    client_id = payload.get("validez_client_id")
+    client_secret = payload.get("validez_client_secret")
+    if not (client_id and client_secret) or tipo_libro != "ventas":
+        return {}
+
+    items: list = []
+    vistos: set = set()
+
+    def _agregar(tipo, serie, numero, fecha, monto):
+        clave = (tipo, serie, numero)
+        if clave not in vistos:
+            vistos.add(clave)
+            items.append((clave, tipo, serie, numero, fecha, monto))
+
+    for f in (*dup_periodo, *dup_anterior):
+        _agregar(
+            f.tipo, f.serie, f.numero,
+            f.fecha_emi.strftime("%d/%m/%Y") if f.fecha_emi else "", float(f.total),
+        )
+    for rec in recon_output.scenario_a[:_TOPE_VALIDEZ]:
+        _agregar(
+            rec.tipo_cdp, rec.serie, rec.numero,
+            _fecha_ddmmyyyy(rec.fecha_emision), float(rec.importe_total),
+        )
+    return _consultar_validez(client_id, client_secret, ruc, items)
+
+
 def procesar_conciliacion(payload: dict) -> dict:
     """
     Punto de entrada del subproceso. Recibe un payload plano (picklable) y
@@ -153,24 +222,6 @@ def procesar_conciliacion(payload: dict) -> dict:
         del filas_actual
     del contenido
 
-    # Validez SUNAT (Rpta SUNAT) de las filas de duplicidad (set acotado): 1 llamada
-    # por comprobante distinto. El token lo preparó el proceso principal.
-    rpta_validez: dict = {}
-    token_validez = payload.get("validez_token")
-    if token_validez and tipo_libro == "ventas":
-        distintas = {
-            (f.tipo, f.serie, f.numero): f
-            for f in (*duplicados_periodo, *duplicados_anterior)
-        }
-        for clave, f in distintas.items():
-            estado = validez_sunat.validar(
-                token_validez, ruc, ruc, f.tipo, f.serie, f.numero,
-                f.fecha_emi.strftime("%d/%m/%Y") if f.fecha_emi else "",
-                monto=float(f.total),
-            )
-            if estado:
-                rpta_validez[clave] = estado
-
     with open(payload["sunat_tmp_path"], "rb") as f:
         sunat_bytes = f.read()
     sunat_records = parse_sunat_propuesta(sunat_bytes, tipo_libro)
@@ -190,6 +241,12 @@ def procesar_conciliacion(payload: dict) -> dict:
     recon_output = reconcile(
         empresa_records, sunat_records, tipo_libro, cobertura,
         sunat_extra=sunat_extra, periodo=payload["periodo"],
+    )
+    # Validez SUNAT (Rpta SUNAT), solo ventas: duplicidad + TODO el escenario A
+    # (con techo de seguridad). El subproceso maneja el token (lo refresca al
+    # expirar) y tolera fallos por comprobante.
+    rpta_validez = _validar_rpta_sunat(
+        payload, tipo_libro, ruc, duplicados_periodo, duplicados_anterior, recon_output
     )
     del empresa_records, sunat_records
 
