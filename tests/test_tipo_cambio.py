@@ -112,6 +112,40 @@ def test_upsert_tipos_cambio_es_idempotente(db_session):
     assert fila.venta == Decimal("3.810")
 
 
+def test_editar_manual_no_lo_pisa_el_refresco_automatico(db_session):
+    """Un día con override manual sobrevive a un upsert automático del BCRP."""
+    fecha = date(2026, 9, 7)
+    repositorio.editar_manual(db_session, fecha, Decimal("3.400"), Decimal("3.410"))
+
+    # El BCRP intenta sobrescribir el mismo día con otro valor.
+    repositorio.upsert_tipos_cambio(
+        db_session,
+        {fecha: CotizacionSbs(fecha, Decimal("3.368"), Decimal("3.369"))},
+        fuente="bcrp",
+    )
+
+    fila = db_session.get(TipoCambioModel, fecha)
+    assert fila.fuente == "manual"
+    assert fila.venta == Decimal("3.410")  # se conservó el manual
+
+
+def test_editar_manual_crea_y_luego_actualiza(db_session):
+    fecha = date(2026, 1, 15)
+    creada = repositorio.editar_manual(db_session, fecha, Decimal("3.70"), Decimal("3.71"))
+    assert creada.fuente == "manual" and creada.venta == Decimal("3.710")
+    actualizada = repositorio.editar_manual(db_session, fecha, Decimal("3.80"), Decimal("3.81"))
+    assert actualizada.venta == Decimal("3.810")
+
+
+def test_listar_rango_devuelve_ordenado(db_session):
+    repositorio.upsert_tipos_cambio(db_session, {
+        date(2026, 1, 3): CotizacionSbs(date(2026, 1, 3), Decimal("3.75"), Decimal("3.77")),
+        date(2026, 1, 2): CotizacionSbs(date(2026, 1, 2), Decimal("3.75"), Decimal("3.76")),
+    })
+    filas = repositorio.listar_rango(db_session, date(2026, 1, 1), date(2026, 1, 31))
+    assert [f.fecha for f in filas] == [date(2026, 1, 2), date(2026, 1, 3)]
+
+
 def test_asegurar_cobertura_baja_solo_el_rango_faltante(db_session, monkeypatch):
     """Si ya hay TC para parte de las fechas, solo se baja del BCRP lo que falta."""
     # Sembramos el 2 y 3; pediremos cobertura para 2, 3 y 6 → solo falta el 6.

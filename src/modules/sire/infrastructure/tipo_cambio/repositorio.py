@@ -36,10 +36,39 @@ def upsert_tipos_cambio(
             "fuente": stmt.excluded.fuente,
             "updated_at": stmt.excluded.updated_at,
         },
+        # Un día con override manual no se pisa con el valor automático del BCRP.
+        where=TipoCambioModel.fuente != "manual",
     )
     db.execute(stmt)
     db.commit()
     return len(valores)
+
+
+def listar_rango(db: Session, desde: date, hasta: date) -> list[TipoCambioModel]:
+    """TC por día en [desde, hasta], ordenado por fecha (para la pantalla admin)."""
+    return list(
+        db.scalars(
+            select(TipoCambioModel)
+            .where(TipoCambioModel.fecha >= desde, TipoCambioModel.fecha <= hasta)
+            .order_by(TipoCambioModel.fecha)
+        ).all()
+    )
+
+
+def editar_manual(db: Session, fecha: date, compra, venta) -> TipoCambioModel:
+    """Fija a mano el TC de un día (fuente='manual'); sobrescribe siempre. Es la
+    corrección del admin cuando el BCRP falta o difiere."""
+    fila = db.get(TipoCambioModel, fecha)
+    if fila is None:
+        fila = TipoCambioModel(fecha=fecha, compra=compra, venta=venta, fuente="manual")
+        db.add(fila)
+    else:
+        fila.compra = compra
+        fila.venta = venta
+        fila.fuente = "manual"
+    db.commit()
+    db.refresh(fila)
+    return fila
 
 
 def fechas_existentes(db: Session, desde: date, hasta: date) -> set[date]:

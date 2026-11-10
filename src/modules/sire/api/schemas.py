@@ -1,5 +1,6 @@
 """Schemas Pydantic de entrada/salida del módulo SIRE."""
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,3 +49,23 @@ class CredentialsStatusResponse(BaseModel):
     usuario_sol: str | None = None
     client_id: str | None = None
     updated_at: datetime | None = None
+
+
+class TipoCambioItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    fecha: date
+    compra: Decimal
+    venta: Decimal
+    fuente: str
+    updated_at: datetime | None = None
+
+
+class TipoCambioEdit(BaseModel):
+    compra: Decimal = Field(gt=0, lt=10000)
+    venta: Decimal = Field(gt=0, lt=10000)
+
+
+class TipoCambioRefrescar(BaseModel):
+    desde: date
+    hasta: date
