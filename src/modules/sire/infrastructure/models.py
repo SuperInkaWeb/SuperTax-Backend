@@ -4,11 +4,12 @@ Modelos de persistencia del módulo SIRE (schema `sire`).
 Referencian a las tablas del núcleo (`core.companies`, `core.users`) solo por
 su id — el módulo no duplica datos de identidad ni de empresa.
 """
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -152,6 +153,29 @@ class CompanyFileMappingModel(Base):
     columnas: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     serie_numero_combinado: Mapped[bool] = mapped_column(Boolean, default=False)
     confirmed_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class TipoCambioModel(Base):
+    """
+    Tipo de cambio oficial por día, GLOBAL (nacional, no por empresa).
+
+    Guarda el valor en la MISMA forma que publica SUNAT en `tcS01Alias`: una fila
+    por día calendario (findes y feriados arrastran el último hábil). La fuente es
+    el BCRP (serie SBS del sistema bancario), que coincide al milésimo con SUNAT
+    aplicando el desfase de +1 día hábil — esa normalización se hace al poblar.
+    """
+
+    __tablename__ = "tipo_cambio"
+    __table_args__ = {"schema": "sire"}
+
+    fecha: Mapped[date] = mapped_column(Date, primary_key=True)
+    compra: Mapped[float] = mapped_column(Numeric(7, 3))
+    venta: Mapped[float] = mapped_column(Numeric(7, 3))
+    # Origen del dato ("bcrp" | "manual"): trazabilidad y posible override manual.
+    fuente: Mapped[str] = mapped_column(String(20), default="bcrp")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )

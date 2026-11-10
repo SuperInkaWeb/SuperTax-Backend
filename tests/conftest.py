@@ -54,7 +54,7 @@ def db_session():
             "core.permissions, core.modules, "
             "sire.company_credentials, sire.company_file_mappings, "
             "sire.report_files, sire.reconciliation_results, "
-            "sire.reconciliation_jobs, "
+            "sire.reconciliation_jobs, sire.tipo_cambio, "
             "sunat.sunat_credentials, sunat.drive_tokens, sunat.job_results, "
             "scanner.documentos RESTART IDENTITY CASCADE"
         )
