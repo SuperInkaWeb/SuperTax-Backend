@@ -454,6 +454,38 @@ def refrescar_tipo_cambio(
     return {"actualizados": actualizados}
 
 
+@router.post("/tipo-cambio/importar")
+async def importar_tipo_cambio(
+    archivo: UploadFile = File(..., description="Excel de TC (hoja TC: Día, Compra, Venta)"),
+    _admin=Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Carga/actualiza el TC desde un Excel (forma SUNAT). Respeta overrides manuales."""
+    contenido = await archivo.read()
+    if not contenido:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío")
+    try:
+        actualizados = tc_sync.importar_excel(db, contenido)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"actualizados": actualizados}
+
+
+@router.post("/tipo-cambio/traer-hoy")
+def traer_tc_hoy(
+    _admin=Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Baja el TC del día desde el txt oficial de SUNAT y lo guarda."""
+    try:
+        actualizados = tc_sync.capturar_tc_hoy(db)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"No se pudo consultar SUNAT: {exc}"
+        )
+    return {"actualizados": actualizados}
+
+
 @router.put("/tipo-cambio/{fecha}", response_model=TipoCambioItem)
 def editar_tipo_cambio(
     fecha: date,

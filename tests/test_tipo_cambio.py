@@ -3,17 +3,38 @@ Tests del tipo de cambio (requerimiento 2.1): parseo del BCRP, normalización a 
 forma de SUNAT (desfase +1 día hábil, verificado contra el histórico real) y
 upsert idempotente de la tabla global.
 """
-from datetime import date
+import io
+from datetime import date, datetime
 from decimal import Decimal
 
+import openpyxl
 from sqlalchemy import func, select
 
 from src.modules.sire.infrastructure.models import TipoCambioModel
-from src.modules.sire.infrastructure.tipo_cambio import bcrp, repositorio, sincronizador
+from src.modules.sire.infrastructure.tipo_cambio import (
+    bcrp,
+    excel_parser,
+    repositorio,
+    sincronizador,
+    sunat_txt,
+)
 from src.modules.sire.infrastructure.tipo_cambio.bcrp import CotizacionSbs, parse_respuesta
 from src.modules.sire.infrastructure.tipo_cambio.normalizador import (
     normalizar_a_forma_sunat,
 )
+
+
+def _excel_tc(filas: list[tuple[datetime, str, str]]) -> bytes:
+    """Excel de TC de prueba: hoja 'TC' con cabecera y filas (fecha, compra, venta)."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "TC"
+    ws.append([None, "Día", "Compra", "Venta"])  # cabecera (col B no es fecha → se ignora)
+    for dia, compra, venta in filas:
+        ws.append([None, dia, float(compra), float(venta)])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 # Respuesta real del BCRP (serie SBS) para la primera semana hábil de enero 2019.
 # config.series: [Compra, Venta]; values alineados a ese orden.
@@ -171,3 +192,61 @@ def test_asegurar_cobertura_baja_solo_el_rango_faltante(db_session, monkeypatch)
     assert llamadas[0][1] == date(2026, 1, 6)
     assert escritas >= 1
     assert db_session.get(TipoCambioModel, date(2026, 1, 6)) is not None
+
+
+# ─────────────────────── Excel + txt de SUNAT (fuentes sin BCRP) ───────────────────────
+def test_parse_tc_excel_extrae_dias():
+    contenido = _excel_tc([
+        (datetime(2026, 9, 7), "3.36", "3.369"),
+        (datetime(2026, 9, 8), "3.351", "3.372"),
+    ])
+    cotizaciones = excel_parser.parse_tc_excel(contenido)
+    assert cotizaciones[date(2026, 9, 7)].venta == Decimal("3.369")
+    assert cotizaciones[date(2026, 9, 8)].compra == Decimal("3.351")
+
+
+def test_parse_tc_excel_sin_filas_falla():
+    import pytest
+    with pytest.raises(ValueError):
+        excel_parser.parse_tc_excel(_excel_tc([]))
+
+
+def test_sunat_txt_parse():
+    cotizaciones = sunat_txt.parse_txt("10/11/2026|3.409|3.418|")
+    assert len(cotizaciones) == 1
+    assert cotizaciones[0].fecha == date(2026, 11, 10)
+    assert cotizaciones[0].venta == Decimal("3.418")
+
+
+def test_importar_excel_hace_upsert(db_session):
+    contenido = _excel_tc([(datetime(2026, 9, 7), "3.36", "3.369")])
+    n = sincronizador.importar_excel(db_session, contenido)
+    assert n == 1
+    fila = db_session.get(TipoCambioModel, date(2026, 9, 7))
+    assert fila.venta == Decimal("3.369") and fila.fuente == "excel"
+
+
+def test_capturar_tc_hoy_guarda(db_session, monkeypatch):
+    monkeypatch.setattr(
+        sunat_txt, "obtener_tc_hoy",
+        lambda: [CotizacionSbs(date(2026, 11, 10), Decimal("3.409"), Decimal("3.418"))],
+    )
+    assert sincronizador.capturar_tc_hoy(db_session) == 1
+    fila = db_session.get(TipoCambioModel, date(2026, 11, 10))
+    assert fila.venta == Decimal("3.418") and fila.fuente == "sunat"
+
+
+def test_preparar_para_periodo_lee_la_tabla_sin_bcrp(db_session, monkeypatch):
+    """La conciliación LEE la tabla; nunca llama al BCRP (si lo hiciera, 403 en prod
+    tumbaría la hoja). Se siembra un día y se verifica que lo devuelve sin red."""
+    repositorio.upsert_tipos_cambio(db_session, {
+        date(2026, 9, 7): CotizacionSbs(date(2026, 9, 7), Decimal("3.36"), Decimal("3.369")),
+    })
+
+    def _boom(*a, **k):
+        raise AssertionError("no debe llamar al BCRP en la conciliación")
+
+    monkeypatch.setattr(bcrp, "obtener_cotizaciones", _boom)
+
+    tc = sincronizador.preparar_para_periodo(db_session, "202609")
+    assert tc["2026-09-07"] == "3.369"

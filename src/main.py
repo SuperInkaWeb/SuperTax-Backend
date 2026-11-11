@@ -9,6 +9,7 @@ Compone la aplicación en orden:
 
 Cada módulo se monta bajo `/api/<key>` de forma automática.
 """
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -17,8 +18,10 @@ from fastapi import FastAPI
 
 from src.bootstrap import ensure_database_ready
 from src.module_registry import MODULES
+from src.modules.sire.infrastructure.tipo_cambio.sincronizador import capturar_tc_hoy
 from src.platform.authorization.roles_api import router as roles_router
 from src.platform.config.settings import settings
+from src.platform.database.session import SessionLocal
 from src.platform.onboarding.api import router as onboarding_router
 from src.platform.support.api import router as tickets_router
 from src.platform.tenancy.companies_api import router as companies_router
@@ -49,6 +52,28 @@ _CORE_ROUTERS = (
 
 _log = logging.getLogger("platform.startup")
 
+# Captura diaria del tipo de cambio desde el txt oficial de SUNAT (ver sincronizador).
+_TC_INTERVALO_SEGUNDOS = 24 * 60 * 60
+
+
+def _capturar_tc_hoy() -> None:
+    db = SessionLocal()
+    try:
+        capturar_tc_hoy(db)
+    finally:
+        db.close()
+
+
+async def _bucle_tc_diario() -> None:
+    """Baja el TC del día de SUNAT al arrancar y cada 24h. Best-effort: un fallo se
+    registra y se reintenta; mantiene la tabla al día sin intervención manual."""
+    while True:
+        try:
+            await asyncio.to_thread(_capturar_tc_hoy)
+        except Exception:
+            _log.warning("Captura diaria de TC falló", exc_info=True)
+        await asyncio.sleep(_TC_INTERVALO_SEGUNDOS)
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -63,7 +88,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             module.on_startup()
         except Exception:
             _log.exception("on_startup del módulo '%s' falló", module.key)
-    yield
+
+    tc_task = asyncio.create_task(_bucle_tc_diario())
+    try:
+        yield
+    finally:
+        tc_task.cancel()
 
 
 def create_app() -> FastAPI:

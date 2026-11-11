@@ -1,16 +1,27 @@
 """
-Orquesta el poblado de la tabla de TC desde el BCRP.
+Poblado de la tabla de TC.
 
-`sincronizar_rango` baja y hace upsert de un rango; `asegurar_cobertura` baja solo
-lo que falte para un conjunto de fechas (pensado para llamarse antes de conciliar
-un periodo, de modo que el TC se mantenga al día on-demand).
+La tabla se mantiene por tres vías que convergen en la MISMA forma SUNAT:
+  - Import de Excel (`importar_excel`) y semilla histórica: ya es forma SUNAT.
+  - Captura diaria del txt de SUNAT (`capturar_tc_hoy`): ya es forma SUNAT.
+  - BCRP (`sincronizar_rango`): se le aplica el corrimiento +1 día hábil. Hoy el
+    BCRP bloquea la IP del servidor, así que esta vía se usa SOLO desde la semilla
+    (una máquina no bloqueada), no en la conciliación.
+
+La conciliación (`preparar_para_periodo`) LEE la tabla; no llama a ninguna fuente
+externa (así un día faltante o un 403 no tumban la hoja de Diferencias TC).
 """
 import calendar
 from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from src.modules.sire.infrastructure.tipo_cambio import bcrp, repositorio
+from src.modules.sire.infrastructure.tipo_cambio import (
+    bcrp,
+    excel_parser,
+    repositorio,
+    sunat_txt,
+)
 from src.modules.sire.infrastructure.tipo_cambio.normalizador import (
     normalizar_a_forma_sunat,
 )
@@ -49,12 +60,26 @@ def _restar_meses(anio: int, mes: int, n: int) -> date:
 
 
 def preparar_para_periodo(db: Session, periodo: str) -> dict[str, str]:
-    """Asegura el TC del periodo (y meses atrás por NC/ND) y lo devuelve listo para
-    el subproceso de conciliación: {fecha ISO 'AAAA-MM-DD': venta como str}."""
+    """TC del periodo (y meses atrás por NC/ND) LEÍDO de la tabla, listo para el
+    subproceso: {fecha ISO 'AAAA-MM-DD': venta como str}. No consulta fuentes
+    externas: la tabla la mantienen el import de Excel, la semilla y el txt diario."""
     anio, mes = int(periodo[:4]), int(periodo[4:6])
     desde = _restar_meses(anio, mes, _MESES_ATRAS_PERIODO)
     hasta = date(anio, mes, calendar.monthrange(anio, mes)[1])
     dias = {desde + timedelta(days=i) for i in range((hasta - desde).days + 1)}
-    asegurar_cobertura(db, dias)
     filas = repositorio.obtener_por_fechas(db, dias)
     return {fecha.isoformat(): str(fila.venta) for fecha, fila in filas.items()}
+
+
+def importar_excel(db: Session, contenido: bytes) -> int:
+    """Carga el Excel de TC (forma SUNAT) y hace upsert por fecha. Sirve para la
+    semilla histórica y el mantenimiento manual."""
+    cotizaciones = excel_parser.parse_tc_excel(contenido)
+    return repositorio.upsert_tipos_cambio(db, cotizaciones, fuente="excel")
+
+
+def capturar_tc_hoy(db: Session) -> int:
+    """Baja el TC del día desde el txt de SUNAT y lo guarda (captura diaria)."""
+    cotizaciones = sunat_txt.obtener_tc_hoy()
+    por_fecha = {c.fecha: c for c in cotizaciones}
+    return repositorio.upsert_tipos_cambio(db, por_fecha, fuente="sunat")
