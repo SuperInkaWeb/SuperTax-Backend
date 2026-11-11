@@ -24,8 +24,9 @@ _TIPOS_EXCLUIDOS_DUP = {"03"}
 
 # Un hueco entre meses mayor a esto es una discontinuidad de numeración (p. ej. una
 # serie que reinicia), no documentos faltantes: se marca para revisar a mano en vez
-# de listar miles de números. Mismo criterio que la correlatividad dentro del mes.
-_HUECO_IRREGULAR = 1_000
+# de listar decenas/cientos de números. Mismo criterio que la correlatividad dentro
+# del mes (ver observaciones._MAX_LISTAR).
+_HUECO_IRREGULAR = 30
 
 Clave = tuple[str, str, str]
 

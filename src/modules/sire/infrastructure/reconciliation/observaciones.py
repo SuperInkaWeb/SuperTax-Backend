@@ -21,10 +21,11 @@ _TIPOS_CORRELATIVIDAD = {"03", "07"}
 
 # Una serie se marca "irregular" (en vez de listar sus faltantes) si tiene un
 # salto gigante entre rangos —típico de una numeración que cambia de longitud,
-# p. ej. mezcla números de 7 y 8 dígitos— o demasiados faltantes en total. Así no
-# se vuelcan miles/millones de números y se distingue de huecos reales.
+# p. ej. mezcla números de 7 y 8 dígitos— o más de _MAX_LISTAR faltantes en total.
+# Así no se vuelcan decenas/cientos de números y se distingue de huecos reales; la
+# cantidad exacta sigue visible en la columna "Cantidad".
 _GAP_IRREGULAR = 10_000
-_MAX_LISTAR = 1_000
+_MAX_LISTAR = 30
 
 
 @dataclass(slots=True)

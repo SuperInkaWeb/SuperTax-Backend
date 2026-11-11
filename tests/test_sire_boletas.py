@@ -267,6 +267,25 @@ def test_correlatividad_numeracion_irregular_no_lista_millones():
     assert res[0].cantidad > 500
 
 
+def test_correlatividad_mas_de_30_faltantes_es_irregular():
+    # Hueco de 40 (101-140): sin salto gigante, pero supera _MAX_LISTAR (30),
+    # así que se resume en vez de volcar decenas de números. Cantidad exacta intacta.
+    recs = [_emp("0070", 10, numero="100"), _emp("0070", 10, numero="141")]
+    res = detectar_correlatividad(recs)
+    assert len(res) == 1
+    assert "irregular" in res[0].faltantes
+    assert res[0].cantidad == 40
+
+
+def test_correlatividad_30_faltantes_se_listan():
+    # En el límite (30 faltantes) todavía se listan explícitamente.
+    recs = [_emp("0070", 10, numero="100"), _emp("0070", 10, numero="131")]
+    res = detectar_correlatividad(recs)
+    assert len(res) == 1
+    assert res[0].faltantes == "101-130"
+    assert res[0].cantidad == 30
+
+
 def test_duplicados_detecta_clave_repetida():
     recs = [
         _emp("BC01", -10, tipo="07", numero="100"),

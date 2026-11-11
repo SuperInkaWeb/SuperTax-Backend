@@ -92,6 +92,24 @@ def test_correlatividad_hueco_enorme_es_irregular():
     assert "irregular" in cortes[0].faltantes
 
 
+def test_correlatividad_mas_de_30_faltantes_es_irregular():
+    # Hueco de 31 (11-41): supera el umbral (30), se resume en vez de listarse.
+    anterior = parse_ple_ventas(_contenido(_linea(tipo="03", serie="B001", numero="00000010")))
+    actual = parse_ple_ventas(_contenido(_linea(tipo="03", serie="B001", numero="00000042")))
+    cortes = cp.cortes_correlatividad(actual, anterior)
+    assert len(cortes) == 1
+    assert "irregular" in cortes[0].faltantes and cortes[0].cantidad == 31
+
+
+def test_correlatividad_30_faltantes_se_listan():
+    # En el límite (30 faltantes) todavía se lista el rango explícito.
+    anterior = parse_ple_ventas(_contenido(_linea(tipo="03", serie="B001", numero="00000010")))
+    actual = parse_ple_ventas(_contenido(_linea(tipo="03", serie="B001", numero="00000041")))
+    cortes = cp.cortes_correlatividad(actual, anterior)
+    assert len(cortes) == 1
+    assert cortes[0].faltantes == "11-40" and cortes[0].cantidad == 30
+
+
 def test_hojas_excel_de_duplicidad_y_correlatividad_se_arman():
     filas = parse_ple_ventas(_contenido(
         _linea(tipo="01", serie="F001", numero="00000010"),
