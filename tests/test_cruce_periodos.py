@@ -70,6 +70,28 @@ def test_duplicados_con_anterior_excluye_boletas_y_ya_duplicados():
     assert [(d.tipo, d.serie, d.numero) for d in dups] == [("01", "F001", "00000005")]
 
 
+def test_duplicados_contra_varios_meses_une_claves_y_marca_origen():
+    julio = parse_ple_ventas(_contenido(
+        _linea(tipo="01", serie="FA10", numero="00000001", periodo="20260700"),
+    ))
+    agosto = parse_ple_ventas(_contenido(
+        _linea(tipo="01", serie="FA10", numero="00000001", periodo="20260800"),  # también en jul
+        _linea(tipo="01", serie="FA57", numero="00000002", periodo="20260800"),
+    ))
+    actual = parse_ple_ventas(_contenido(
+        _linea(tipo="01", serie="FA10", numero="00000001"),   # en jul y ago
+        _linea(tipo="01", serie="FA57", numero="00000002"),   # solo en ago
+        _linea(tipo="01", serie="FA99", numero="00000003"),   # en ninguno → no dup
+    ))
+    origen = cp.claves_a_periodos([julio, agosto])
+    en_periodo = cp.claves_duplicadas_en_periodo(actual)
+    dups = cp.duplicados_con_anterior(actual, set(origen), en_periodo)
+    previos = cp.periodos_previos_de(dups, origen)
+
+    assert [(d.serie, d.numero) for d in dups] == [("FA10", "00000001"), ("FA57", "00000002")]
+    assert previos == [["20260700", "20260800"], ["20260800"]]
+
+
 def test_correlatividad_hueco_pequeno():
     anterior = parse_ple_ventas(_contenido(_linea(tipo="07", serie="NC01", numero="00000010")))
     actual = parse_ple_ventas(_contenido(_linea(tipo="07", serie="NC01", numero="00000012")))

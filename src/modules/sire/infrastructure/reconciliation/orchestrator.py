@@ -289,7 +289,7 @@ class _JobSnapshot:
     saved_mapping: dict | None
     cobertura_fechas: list | None
     empresa_file_path: str | None
-    empresa_prev_file_path: str | None
+    empresa_prev_file_paths: list[str] | None
     empresa_filename: str
     num_ticket: str | None
     propuesta_origen_at: datetime | None
@@ -337,7 +337,11 @@ async def procesar_job(db: Session, job_id: int) -> None:
         ),
         cobertura_fechas=job.cobertura_fechas,
         empresa_file_path=job.empresa_file_path,
-        empresa_prev_file_path=job.empresa_prev_file_path,
+        # Varios meses previos (nuevo); si es un job antiguo, cae al único (deprecado).
+        empresa_prev_file_paths=(
+            job.empresa_prev_file_paths
+            or ([job.empresa_prev_file_path] if job.empresa_prev_file_path else None)
+        ),
         empresa_filename=job.empresa_filename or "",
         num_ticket=job.num_ticket,
         propuesta_origen_at=job.propuesta_origen_at,
@@ -452,7 +456,7 @@ async def procesar_job(db: Session, job_id: int) -> None:
 
         payload = {
             "empresa_file_path": snap.empresa_file_path,
-            "empresa_prev_file_path": snap.empresa_prev_file_path,
+            "empresa_prev_file_paths": snap.empresa_prev_file_paths,
             "empresa_filename": snap.empresa_filename,
             "sunat_tmp_path": sunat_tmp_path,
             "tipo_libro": tipo_libro.value,

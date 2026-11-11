@@ -49,8 +49,7 @@ def create_reconciliation_job(
     mapeo_config: dict | None = None,
     cobertura_fechas: list | None = None,
     reutilizar_propuesta: bool = False,
-    prev_filename: str | None = None,
-    prev_content: bytes | None = None,
+    prev_files: list[tuple[str | None, bytes]] | None = None,
 ) -> ReconciliationJob:
     """
     Valida el periodo, crea el job en estado 'en_cola' y guarda el archivo de la
@@ -73,15 +72,20 @@ def create_reconciliation_job(
     storage_path = f"sire/uploads/{company_id}/{uuid.uuid4().hex}/{filename or 'empresa.csv'}"
     storage.save(storage_path, content)
 
-    # PLE del mes anterior (opcional, solo ventas): habilita duplicidad y
-    # correlatividad entre periodos. Se guarda aparte, con su propia ruta única.
-    prev_path: str | None = None
-    if prev_content and tipo_libro == TipoLibro.ventas:
-        prev_path = (
-            f"sire/uploads/{company_id}/{uuid.uuid4().hex}/"
-            f"{prev_filename or 'mes_anterior.txt'}"
-        )
-        storage.save(prev_path, prev_content)
+    # PLE de meses previos (opcional, solo ventas): habilita duplicidad contra
+    # varios meses y correlatividad contra el más reciente. Cada archivo se guarda
+    # aparte, con su propia ruta única. Se ignoran los vacíos.
+    prev_paths: list[str] = []
+    if prev_files and tipo_libro == TipoLibro.ventas:
+        for prev_filename, prev_content in prev_files:
+            if not prev_content:
+                continue
+            prev_path = (
+                f"sire/uploads/{company_id}/{uuid.uuid4().hex}/"
+                f"{prev_filename or 'mes_anterior.txt'}"
+            )
+            storage.save(prev_path, prev_content)
+            prev_paths.append(prev_path)
 
     return repo.create(
         company_id,
@@ -94,5 +98,5 @@ def create_reconciliation_job(
         mapeo_config=mapeo_config,
         cobertura_fechas=cobertura_fechas,
         reutilizar_propuesta=reutilizar_propuesta,
-        empresa_prev_file_path=prev_path,
+        empresa_prev_file_paths=prev_paths,
     )

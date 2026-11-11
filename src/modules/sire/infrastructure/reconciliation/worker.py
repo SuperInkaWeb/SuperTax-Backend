@@ -202,23 +202,32 @@ def procesar_conciliacion(payload: dict) -> dict:
     )
 
     # Validaciones entre periodos (solo ventas): duplicidad dentro del mes y, si se
-    # subió el PLE del mes anterior, duplicidad y correlatividad contra él.
+    # subieron PLE de meses previos, duplicidad contra TODOS ellos (unión) y
+    # correlatividad contra el de periodo más reciente (la continuidad es mes a mes).
     duplicados_periodo: list = []
     duplicados_anterior: list = []
+    periodos_previos_anterior: list = []
     cortes_correlatividad: list = []
     if tipo_libro == "ventas":
         filas_actual = parse_ple_ventas(contenido)
         if filas_actual:
             duplicados_periodo = cruce.duplicados_en_periodo(filas_actual)
-            prev_path = payload.get("empresa_prev_file_path")
-            if prev_path:
+            filas_prev_por_mes: list = []
+            for prev_path in payload.get("empresa_prev_file_paths") or []:
                 filas_prev = parse_ple_ventas(storage.read(prev_path))
+                if filas_prev:
+                    filas_prev_por_mes.append(filas_prev)
+            if filas_prev_por_mes:
                 en_periodo = cruce.claves_duplicadas_en_periodo(filas_actual)
+                origen = cruce.claves_a_periodos(filas_prev_por_mes)
                 duplicados_anterior = cruce.duplicados_con_anterior(
-                    filas_actual, cruce.indice_claves(filas_prev), en_periodo
+                    filas_actual, set(origen), en_periodo
                 )
-                cortes_correlatividad = cruce.cortes_correlatividad(filas_actual, filas_prev)
-                del filas_prev
+                periodos_previos_anterior = cruce.periodos_previos_de(duplicados_anterior, origen)
+                # Correlatividad: solo el mes inmediatamente anterior (el de mayor periodo).
+                filas_mes_previo = max(filas_prev_por_mes, key=lambda fs: fs[0].periodo)
+                cortes_correlatividad = cruce.cortes_correlatividad(filas_actual, filas_mes_previo)
+                del filas_prev_por_mes
         del filas_actual
     del contenido
 
@@ -263,6 +272,7 @@ def procesar_conciliacion(payload: dict) -> dict:
         diferencias_tc=diferencias_tc,
         duplicados_periodo=duplicados_periodo,
         duplicados_anterior=duplicados_anterior,
+        periodos_previos_anterior=periodos_previos_anterior,
         cortes_correlatividad=cortes_correlatividad,
         rpta_validez=rpta_validez,
     )

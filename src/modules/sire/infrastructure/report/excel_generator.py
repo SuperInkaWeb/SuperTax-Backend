@@ -210,15 +210,19 @@ def _agregar_hoja_diferencias_tc(wb, diferencias) -> None:
                 celda.number_format = fmt
 
 
-def _agregar_hoja_duplicidad(wb, nombre: str, filas, rpta_validez=None) -> None:
+def _agregar_hoja_duplicidad(wb, nombre: str, filas, rpta_validez=None, periodos_previos=None) -> None:
     """Hoja de duplicidad (detalle por comprobante). Se usa tanto para la duplicidad
-    dentro del mes como para la duplicidad contra el mes anterior. Si se pasa
-    `rpta_validez` ({(tipo,serie,numero): estado}) agrega la columna «Rpta SUNAT»."""
+    dentro del mes como para la duplicidad contra periodos anteriores. Si se pasa
+    `rpta_validez` ({(tipo,serie,numero): estado}) agrega la columna «Rpta SUNAT»; si
+    se pasa `periodos_previos` (lista de list[str] AAAAMM, alineada con `filas`)
+    agrega «Periodo(s) previo(s)» — contra qué mes(es) colisiona cada comprobante."""
     ws = wb.create_sheet(nombre)
     headers = [
         "#", "CUO", "Periodo", "Fecha Emisión", "Tipo Compr.", "Num Documento",
         "Razón Social", "V_IGV", "V_Total", "Moneda", "TC",
     ]
+    if periodos_previos is not None:
+        headers.append("Periodo(s) previo(s)")
     if rpta_validez is not None:
         headers.append("Rpta SUNAT")
     _set_header_row(ws, headers)
@@ -231,6 +235,9 @@ def _agregar_hoja_duplicidad(wb, nombre: str, filas, rpta_validez=None) -> None:
             float(f.igv), float(f.total), f.moneda,
             float(f.tc) if f.tc is not None else None,
         ]
+        if periodos_previos is not None:
+            previos = periodos_previos[idx - 1] if idx - 1 < len(periodos_previos) else []
+            valores.append(", ".join(_fmt_periodo(p) for p in previos))
         if rpta_validez is not None:
             valores.append(rpta_validez.get((f.tipo, f.serie, f.numero), ""))
         for col_idx, val in enumerate(valores, 1):
@@ -278,6 +285,7 @@ def generate_excel(
     diferencias_tc: list | None = None,
     duplicados_periodo: list | None = None,
     duplicados_anterior: list | None = None,
+    periodos_previos_anterior: list | None = None,
     cortes_correlatividad: list | None = None,
     rpta_validez: dict | None = None,
 ) -> bytes:
@@ -794,7 +802,10 @@ def generate_excel(
     if not es_compras and duplicados_periodo:
         _agregar_hoja_duplicidad(wb, "Duplicidad en el periodo", duplicados_periodo, validez)
     if not es_compras and duplicados_anterior:
-        _agregar_hoja_duplicidad(wb, "Duplicidad mes anterior", duplicados_anterior, validez)
+        _agregar_hoja_duplicidad(
+            wb, "Duplicidad periodos anteriores", duplicados_anterior, validez,
+            periodos_previos=periodos_previos_anterior,
+        )
     if not es_compras and cortes_correlatividad:
         _agregar_hoja_correlatividad_anterior(wb, cortes_correlatividad)
 

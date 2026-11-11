@@ -112,8 +112,9 @@ async def create_job(
     cobertura_fechas: str | None = Form(None, description="JSON de fechas (solo ventas)"),
     sin_sire: bool = Form(False, description="Solo compras: empresa no afiliada al SIRE"),
     reutilizar_propuesta: bool = Form(False, description="Reutilizar propuesta fresca si existe"),
-    archivo_mes_anterior: UploadFile | None = File(
-        None, description="PLE del mes anterior (opcional, ventas): duplicidad/correlatividad"
+    archivos_mes_anterior: list[UploadFile] = File(
+        default=[],
+        description="PLE de meses previos (opcional, ventas): duplicidad/correlatividad",
     ),
     ctx: ActiveContext = Depends(require_permission("sire.job.create")),
     db: Session = Depends(get_db),
@@ -121,7 +122,7 @@ async def create_job(
 ) -> JobResponse:
     _chequear_limite_conciliacion(ctx.user.id)
     content = await archivo.read()
-    prev_content = await archivo_mes_anterior.read() if archivo_mes_anterior else None
+    prev_files = [(f.filename, await f.read()) for f in archivos_mes_anterior]
     mapeo_config = _parse_json(mapeo_columnas, "mapeo_columnas") if mapeo_columnas else None
 
     cobertura: list | None = None
@@ -149,8 +150,7 @@ async def create_job(
             mapeo_config=mapeo_config,
             cobertura_fechas=cobertura,
             reutilizar_propuesta=reutilizar_propuesta,
-            prev_filename=archivo_mes_anterior.filename if archivo_mes_anterior else None,
-            prev_content=prev_content,
+            prev_files=prev_files,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))

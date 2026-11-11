@@ -57,6 +57,24 @@ def indice_claves(filas: list[FilaPLE]) -> set[Clave]:
     return {_clave(f) for f in filas}
 
 
+def claves_a_periodos(filas_por_mes: list[list[FilaPLE]]) -> dict[Clave, list[str]]:
+    """Para cada clave (tipo+serie+número), los periodos (AAAAMM) de los PLE previos
+    donde aparece. Base de la duplicidad contra VARIOS meses: su conjunto de claves
+    es el universo previo, y el valor dice contra qué mes(es) colisiona cada una."""
+    acumulado: dict[Clave, set[str]] = {}
+    for filas in filas_por_mes:
+        for f in filas:
+            acumulado.setdefault(_clave(f), set()).add(f.periodo)
+    return {clave: sorted(periodos) for clave, periodos in acumulado.items()}
+
+
+def periodos_previos_de(
+    dups: list[FilaPLE], origen: dict[Clave, list[str]]
+) -> list[list[str]]:
+    """Alineado con `dups`: los periodos previos donde ya estaba cada comprobante."""
+    return [origen.get(_clave(f), []) for f in dups]
+
+
 def claves_duplicadas_en_periodo(filas: list[FilaPLE]) -> set[Clave]:
     """Claves (tipo+serie+número) que aparecen más de una vez en el archivo."""
     conteo = Counter(_clave(f) for f in filas)
