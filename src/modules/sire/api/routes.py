@@ -7,7 +7,6 @@ Doble puerta de seguridad:
 Todo se filtra por la empresa activa (`ctx.company.id`) → aislamiento multi-tenant.
 """
 import json
-from datetime import date
 
 from fastapi import (
     APIRouter,
@@ -25,9 +24,6 @@ from src.modules.sire.api.schemas import (
     CredentialsInput,
     CredentialsStatusResponse,
     JobResponse,
-    TipoCambioEdit,
-    TipoCambioItem,
-    TipoCambioRefrescar,
     ValidezCredentialsInput,
     ValidezCredentialsStatusResponse,
 )
@@ -52,12 +48,9 @@ from src.modules.sire.infrastructure.repositories import (
     SqlFileMappingRepository,
     SqlReconciliationRepository,
 )
-from src.modules.sire.infrastructure.tipo_cambio import repositorio as tc_repo
-from src.modules.sire.infrastructure.tipo_cambio import sincronizador as tc_sync
 from src.platform.authorization.deps import (
     require_module,
     require_permission,
-    require_platform_admin,
 )
 from src.platform.database.session import get_db
 from src.platform.storage import get_storage
@@ -409,90 +402,6 @@ def delete_formato(
     file_mapping.delete_saved(SqlFileMappingRepository(db), ctx.company.id, tipo_libro)
 
 
-# ─────────────────────── Tipo de cambio (global, solo SuperAdmin) ───────────────────────
-# El TC es nacional (una fuente de verdad), así que su administración es a nivel
-# plataforma, no por empresa. Son endpoints síncronos (def): la consulta al BCRP
-# usa httpx sync y FastAPI la corre en su threadpool sin bloquear el event loop.
-_TC_RANGO_MAX_DIAS = 400
-
-
-def _validar_rango(desde: date, hasta: date) -> None:
-    if hasta < desde:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="'hasta' debe ser >= 'desde'")
-    if (hasta - desde).days > _TC_RANGO_MAX_DIAS:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail=f"El rango no puede superar {_TC_RANGO_MAX_DIAS} días",
-        )
-
-
-@router.get("/tipo-cambio", response_model=list[TipoCambioItem])
-def list_tipo_cambio(
-    desde: date,
-    hasta: date,
-    _admin=Depends(require_platform_admin),
-    db: Session = Depends(get_db),
-) -> list[TipoCambioItem]:
-    _validar_rango(desde, hasta)
-    return [TipoCambioItem.model_validate(f) for f in tc_repo.listar_rango(db, desde, hasta)]
-
-
-@router.post("/tipo-cambio/refrescar")
-def refrescar_tipo_cambio(
-    payload: TipoCambioRefrescar,
-    _admin=Depends(require_platform_admin),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Baja del BCRP el TC del rango y lo actualiza (respeta los overrides manuales)."""
-    _validar_rango(payload.desde, payload.hasta)
-    try:
-        actualizados = tc_sync.sincronizar_rango(db, payload.desde, payload.hasta)
-    except Exception as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, detail=f"No se pudo consultar el BCRP: {exc}"
-        )
-    return {"actualizados": actualizados}
-
-
-@router.post("/tipo-cambio/importar")
-async def importar_tipo_cambio(
-    archivo: UploadFile = File(..., description="Excel de TC (hoja TC: Día, Compra, Venta)"),
-    _admin=Depends(require_platform_admin),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Carga/actualiza el TC desde un Excel (forma SUNAT). Respeta overrides manuales."""
-    contenido = await archivo.read()
-    if not contenido:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío")
-    try:
-        actualizados = tc_sync.importar_excel(db, contenido)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    return {"actualizados": actualizados}
-
-
-@router.post("/tipo-cambio/traer-hoy")
-def traer_tc_hoy(
-    _admin=Depends(require_platform_admin),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Baja el TC del día desde el txt oficial de SUNAT y lo guarda."""
-    try:
-        actualizados = tc_sync.capturar_tc_hoy(db)
-    except Exception as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, detail=f"No se pudo consultar SUNAT: {exc}"
-        )
-    return {"actualizados": actualizados}
-
-
-@router.put("/tipo-cambio/{fecha}", response_model=TipoCambioItem)
-def editar_tipo_cambio(
-    fecha: date,
-    payload: TipoCambioEdit,
-    _admin=Depends(require_platform_admin),
-    db: Session = Depends(get_db),
-) -> TipoCambioItem:
-    """Override manual de un día (fuente='manual'); el refresco del BCRP no lo pisa."""
-    fila = tc_repo.editar_manual(db, fecha, payload.compra, payload.venta)
-    return TipoCambioItem.model_validate(fila)
+# Los endpoints de tipo de cambio (globales, solo SuperAdmin) viven en
+# `tipo_cambio_routes.py`, en un router propio sin `require_module` (no dependen de
+# una empresa activa). Aquí quedan solo los endpoints por empresa del módulo SIRE.

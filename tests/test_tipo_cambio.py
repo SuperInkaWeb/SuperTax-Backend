@@ -250,3 +250,27 @@ def test_preparar_para_periodo_lee_la_tabla_sin_bcrp(db_session, monkeypatch):
 
     tc = sincronizador.preparar_para_periodo(db_session, "202609")
     assert tc["2026-09-07"] == "3.369"
+
+
+def test_endpoint_tc_no_requiere_empresa_activa(db_session):
+    """El TC es global: el endpoint NO debe exigir X-Company-Id (bug en prod)."""
+    from fastapi.testclient import TestClient
+
+    from src.main import app
+    from src.platform.database.session import get_db
+    from src.platform.identity.current_user import get_current_user
+    from src.platform.users.models import User
+
+    admin = User(
+        email="sa@e.pe", nombre="SA", auth0_sub="auth0|sa", is_platform_admin=True
+    )
+    db_session.add(admin)
+    db_session.flush()
+    app.dependency_overrides[get_current_user] = lambda: admin
+    app.dependency_overrides[get_db] = lambda: db_session
+    try:
+        # Sin cabecera X-Company-Id.
+        resp = TestClient(app).get("/api/sire/tipo-cambio?desde=2026-11-01&hasta=2026-11-30")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200

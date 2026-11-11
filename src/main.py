@@ -18,6 +18,7 @@ from fastapi import FastAPI
 
 from src.bootstrap import ensure_database_ready
 from src.module_registry import MODULES
+from src.modules.sire.api.tipo_cambio_routes import router as tipo_cambio_router
 from src.modules.sire.infrastructure.tipo_cambio.sincronizador import capturar_tc_hoy
 from src.platform.authorization.roles_api import router as roles_router
 from src.platform.config.settings import settings
@@ -104,6 +105,9 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     for router in _CORE_ROUTERS:
         app.include_router(router)
+
+    # TC global (SuperAdmin): router propio, sin require_module ni prefijo extra.
+    app.include_router(tipo_cambio_router)
 
     for module in MODULES:
         app.include_router(module.router, prefix=f"/api/{module.key}")
